@@ -133,7 +133,9 @@ def render_base(inspection: Inspection, engine: Engine, role: str, kind: str):
         draw_endpoints(image, data.records)
     elif kind == "response":
         image = scalar_rgb(data.relative, data.eligible, (0.34, 1.32), DIVERGING)
+        image = mixed_overlay(image, data.alignment.recapture, SUPPORT_COLORS["outside"], 0.55)
         image = color_edges(image, data.weak, (247, 204, 106), 0.63)
+        draw_recapture_cells(image, data, context.cells)
     else:
         image = scalar_rgb(data.heat, data.support, (0.5, 1.3), DIVERGING)
     return image, context
@@ -192,6 +194,20 @@ def draw_measurements(image: Image.Image, records: list[dict], color: tuple, lim
                                   outline=(*color, 167), width=1)
         if x1 - x0 >= 25 and y1 - y0 >= 20:
             draw_tag(painter, (x0 + 3, y0 + 2), row["id"].split("-")[-1], color, face)
+
+
+def draw_recapture_cells(image: Image.Image, data, cells: list[Cell]):
+    painter = ImageDraw.Draw(image, "RGBA")
+    face = font(9)
+    for cell in cells:
+        row = data.alignment.cells[cell.id]
+        if row["state"] not in ("recapture", "partial"):
+            continue
+        x0, y0, x1, y1 = cell.bounds
+        painter.rectangle((x0 + 1, y0 + 1, x1 - 2, y1 - 2), outline=(238, 162, 121, 214), width=1)
+        if x1 - x0 >= 54 and y1 - y0 >= 18:
+            draw_tag(painter, (x0 + 4, y1 - 15), "recapture" if row["state"] == "recapture" else "part",
+                     (238, 162, 121), face)
 
 
 def draw_endpoints(image: Image.Image, records: list[dict]):

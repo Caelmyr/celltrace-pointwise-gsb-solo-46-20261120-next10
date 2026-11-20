@@ -223,3 +223,89 @@ def toggled_view(high, low, metadata, cells, window, fraction):
     painter = ImageDraw.Draw(output, "RGBA")
     draw_tag(painter, (8, 6), "Top left / high current", (150, 236, 205), font(11))
     return wrap_pair(output, metadata, "Paired current checkerboard")
+
+
+CORRESPONDENCE_SIZE = 168
+
+
+def point_window(inspection: Inspection, x: int, y: int, size: int = CORRESPONDENCE_SIZE) -> PairWindow:
+    width, height = inspection.plane.width, inspection.plane.height
+    half = max(24, size // 2)
+    x0 = max(0, min(width - 2 * half, x - half))
+    y0 = max(0, min(height - 2 * half, y - half))
+    x1 = min(width, x0 + 2 * half)
+    y1 = min(height, y0 + 2 * half)
+    return PairWindow((x0, y0, x1, y1), ((x0 + x1) / 2, (y0 + y1) / 2), x1 - x0, y1 - y0)
+
+
+def correspondence_result(engine: Engine, inspection: Inspection, x_input, y_input, contrast: str, gamma_raw):
+    from .model import integer
+    from .response import probe_response
+    gamma = real(gamma_raw, "Paired display gamma", 0.2, 3.0)
+    x = integer(x_input, "Plane x", 0, inspection.plane.width - 1)
+    y = integer(y_input, "Plane y", 0, inspection.plane.height - 1)
+    analysis = engine.compare(inspection).data
+    point = probe_response(analysis, x, y)
+    window = point_window(inspection, x, y)
+    key = (
+        "correspondence", engine.view_key(inspection, "high", "response", False, False),
+        inspection.id, inspection.revision, (x, y), contrast, gamma,
+    )
+    return engine.materials.get(key, lambda: draw_correspondence(
+        engine, inspection, analysis, point, window, x, y, contrast, gamma
+    ))
+
+
+def draw_correspondence(engine, inspection, analysis, point, window, x, y, contrast, gamma):
+    high, low, metadata = views(engine, inspection, window, contrast, gamma)
+    high = fit_display(high, (CORRESPONDENCE_SIZE, CORRESPONDENCE_SIZE))
+    low = fit_display(low, (CORRESPONDENCE_SIZE, CORRESPONDENCE_SIZE))
+    x0, y0, x1, y1 = window.bounds
+    scale_x = high.width / (x1 - x0)
+    scale_y = high.height / (y1 - y0)
+    status = analysis.alignment.status_at(x, y)
+    tile = analysis.alignment.tile_at(x, y) or {}
+    measured = analysis.eligible[y, x]
+    color = (248, 208, 113) if measured else (235, 160, 128)
+    canvas = Image.new("RGB", (high.width + low.width + 34, max(high.height, low.height) + 66), (20, 33, 40))
+    painter = ImageDraw.Draw(canvas, "RGBA")
+    canvas.paste(high, (12, 38))
+    canvas.paste(low, (high.width + 22, 38))
+    for image, offset_x in ((high, 12), (low, high.width + 22)):
+        draw_tag(painter, (offset_x + 6, 40), "high" if offset_x == 12 else "low", (176, 220, 205), font(10))
+    draw_tag(painter, (12, 8), "circle: compared pixel / ring: low-current match", (176, 220, 205), font(9))
+    high_point = ((x - x0 + 0.5) * scale_x + 12, (y - y0 + 0.5) * scale_y + 38)
+    circle(painter, high_point, color)
+    if point["low_point"] is not None:
+        low_point = (
+            (point["low_point"][0] - x0 + 0.5) * scale_x + high.width + 22,
+            (point["low_point"][1] - y0 + 0.5) * scale_y + 38,
+        )
+        circle(painter, low_point, color)
+    if point["match_point"] is not None:
+        match_point = (
+            (point["match_point"][0] - x0 + 0.5) * scale_x + high.width + 22,
+            (point["match_point"][1] - y0 + 0.5) * scale_y + 38,
+        )
+        ring(painter, match_point, (144, 196, 238))
+    shift = point["local_shift"]
+    caption = (
+        f"Local shift {shift[0]:+.2f}, {shift[1]:+.2f} px" if shift is not None
+        else "No local shift available"
+    )
+    painter.text((12, canvas.height - 22), f"{status} / {caption}", fill=(173, 203, 197), font=font(10))
+    if tile.get("reason"):
+        painter.text((12, canvas.height - 35), str(tile["reason"])[:64], fill=(230, 178, 136), font=font(9))
+    return png_bytes(canvas)
+
+
+def ring(painter, point, color):
+    x, y = point
+    painter.ellipse((x - 5, y - 5, x + 5, y + 5), outline=(*color, 245), width=2)
+
+
+def circle(painter, point, color):
+    x, y = point
+    painter.ellipse((x - 9, y - 9, x + 9, y + 9), outline=(*color, 235), width=2)
+    painter.line((x - 14, y, x - 4, y), fill=(*color, 200), width=1)
+    painter.line((x + 4, y, x + 14, y), fill=(*color, 200), width=1)

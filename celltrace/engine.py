@@ -126,7 +126,10 @@ class Engine:
         key = self.identity(inspection, "response", high, low)
         result = self.measurements.get(
             key,
-            lambda: response_map(high.panel, low.panel, high.capture, low.capture, high.cells, inspection.analysis),
+            lambda: response_map(
+                high.panel, low.panel, high.capture, low.capture, high.cells, inspection.analysis,
+                (inspection.plane.width, inspection.plane.height),
+            ),
         )
         return PlaneAnalysis(high, result)
 

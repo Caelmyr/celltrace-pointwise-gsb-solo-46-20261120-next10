@@ -1,7 +1,7 @@
 import {
   $, $$, ROLE, availableRoles, badge, bindCanvas, button, changeLabel, definition, download,
   drawPoints, e, field, format, histogram, itemCard, metrics, normalizedPoint,
-  num, percent, request, saveBlob, submit, table, wireForm,
+  num, percent, readable, request, saveBlob, submit, table, wireForm,
 } from "./ui.js";
 import {showCalibration, showPlacement, showPlacementReview} from "./captures.js";
 import {showFindingForm} from "./reviews.js";
@@ -19,7 +19,8 @@ const LEGENDS = {
   intensity: [["#464197", "Lower signal"], ["#8ad0a1", "Higher signal"]],
   dark: [["#f5a968", "Dark evidence"]],
   cracks: [["#ff7b98", "Trace"], ["#ffe2a1", "Endpoint"], ["#9ce8d4", "Junction"], ["#638fc0", "Busbar band"]],
-  response: [["#a1387b", "Weaker"], ["#f6ca78", "Reference range"], ["#20579e", "Stronger"]],
+  response: [["#a1387b", "Weaker"], ["#f6ca78", "Reference range"], ["#20579e", "Stronger"],
+    ["#383354", "Recapture"]],
   strings: [["#a1387b", "Lower relative signal"], ["#40aeac", "Higher relative signal"]],
   calibration: [["#dc9b49", "Invalid reference"], ["#38649d", "Signal at floor"]],
 };
@@ -33,8 +34,8 @@ const COLS = {
     ["Open boundary", "open_boundary", join]],
   cracks: [["Trace", "id"], ["Cell", "cell"], ["Length px", "length_px"], ["Length mm", "length_mm"], ["Axis °", "axis_degrees"],
     ["Ends", "endpoints", length], ["Junctions", "junctions", length]],
-  response: [["Cell", "cell"], ["Overlap", "support", percent], ["Ratio", "ratio"], ["Relative", "relative"],
-    ["Weak px", "weak_fraction", percent], ["Assessment", "assessment"]],
+  response: [["Cell", "cell"], ["Aligned", "aligned_fraction", percent], ["Ratio", "ratio"], ["Relative", "relative"],
+    ["State", "alignment_state"], ["Weak px", "weak_fraction", percent], ["Assessment", "assessment"]],
   strings: [["String", "string"], ["Support", "coverage", percent], ["Median", "median_relative"], ["Range", "p90_p10_span"],
     ["Flags", "flags", join], ["Cells", "cells", join]],
 };
@@ -172,6 +173,9 @@ export function renderWorkbench(app, root) {
   const view = ctx.layer === "support" || ctx.layer === "panel" ? "quality" : ctx.layer;
   loadLayer(app, root, view, displayRole, version);
   if (ctx.cell) loadCell(app, root, displayRole, ctx.cell).catch(app.fail);
+  if (ctx.responsePoint && view === "response") {
+    loadCorrespondence(app, root, ctx.responsePoint.x, ctx.responsePoint.y, version);
+  }
 }
 
 function legend(layer) {
@@ -199,7 +203,7 @@ function layerUrl(app, role, cell = "") {
 }
 
 function metricRows(kind, value) {
-  const get = (label, key, fmt = format) => [label, fmt(value[key])];
+  const get = (label, key, fmt = format) => [label, fmt(key.split(".").reduce((acc, part) => acc?.[part], value))];
   return {
     quality: [
       get("Usable pixels", "usable_pixels"), get("Clipped pixels", "clipped_pixels"),
@@ -220,7 +224,8 @@ function metricRows(kind, value) {
     ],
     response: [
       get("Usable cells", "usable_cells"), get("Weak cells", "weak_cells"),
-      get("Ratio reference", "reference_ratio"), get("Overlap pixels", "shared_pixels"),
+      get("Ratio reference", "reference_ratio"), get("Local overlap", "alignment.plane_compared_fraction", percent),
+      get("Cells to recapture", "alignment.cells_recapture"),
     ],
     strings: [get("Strings", "groups"), get("Flagged strings", "groups_with_flags")],
   }[kind] || [];
@@ -248,6 +253,10 @@ async function loadLayer(app, root, kind, role, version) {
       : table(COLS[kind], model.rows, (row) => row.cell
         ? `<button type="button" class="compact" data-cell="${e(row.cell)}" aria-label="Inspect ${e(row.cell)}">Inspect</button>`
         : "");
+    if (kind === "response") {
+      result.innerHTML += `<div class="card-pad section-stack" id="response-pair">
+        <p class="small-copy">Probe a point on the image to see the pixel that was compared on each capture.</p></div>`;
+    }
     $$("[data-cell]", result).forEach((node) => {
       node.onclick = () => selectCell(app, root, role, node.dataset.cell);
     });
@@ -279,7 +288,39 @@ async function probeAt(app, root, role, normalized) {
   const probe = await request(app.url("/pixel", {role, x, y, pair: ctx.layer === "response" ? 1 : 0}));
   if (viewAt !== app.renderVersion) return;
   ctx.probe = {...probe, normalized};
+  ctx.responsePoint = probe.response ? {x, y} : null;
   selectCell(app, root, role, probe.cell);
+  if (probe.response) loadCorrespondence(app, root, x, y, viewAt);
+}
+
+async function loadCorrespondence(app, root, x, y, version) {
+  const paired = $("#response-pair", root);
+  if (!paired) return;
+  paired.innerHTML = '<p class="small-copy">Locating the same point on both captures…</p>';
+  try {
+    const detail = await request(app.url("/correspondence/data", {x, y}));
+    if (version !== app.renderVersion || !paired.isConnected) return;
+    const point = detail.comparison;
+    const view = app.case.plane;
+    paired.innerHTML = `<img class="pair-image" alt="The probed point on both rectified captures"
+      src="${e(app.url("/correspondence/image", {x, y}))}">${definition([
+      ["High pixel", point.high_point.join(", ")],
+      ["Low pixel", point.low_point ? point.low_point.join(", ") : "—"],
+      ["Matched low pixel", point.match_point ? point.match_point.join(", ") : "—"],
+      ["Local shift (px)", point.local_shift ? point.local_shift.map((value) => format(value, 2)).join(", ") : "—"],
+      ["Alignment", readable(point.alignment)],
+      ["Counted in ratio", point.reported ? "Yes" : "No"],
+      ...(point.ratio == null ? [] : [["Paired ratio", format(point.ratio, 4)]]),
+      ...(point.relative == null ? [] : [["Relative response", format(point.relative, 4)]]),
+      ...(point.alignment_reason ? [["Note", point.alignment_reason]] : []),
+    ])}<p class="small-copy">The circle is the plane pixel whose low/high readings are divided for the ratio.
+      The ring marks where that content sits in the low-current capture after local registration
+      (${view.width} × ${view.height} px plane).</p>`;
+  } catch (error) {
+    if (version === app.renderVersion && paired.isConnected) {
+      paired.innerHTML = `<p class="error">${e(error.message)}</p>`;
+    }
+  }
 }
 
 function selectCell(app, root, role, cell) {
@@ -303,7 +344,9 @@ async function loadCell(app, root, role, cell) {
     ["Dark regions", value.dark.length], ["Crack traces", value.cracks.length],
     ...(probe ? [["Plane pixel", `${probe.x}, ${probe.y}`], ["Sensor point", probe.source.map((x) => format(x, 2)).join(", ")],
       ["Signal", format(probe.signal, 5)], ["Status", probe.warnings.join(", ") || "Usable"],
-      ...(probe.response ? [["Paired ratio", format(probe.response.ratio)]] : [])] : []),
+      ...(probe.response ? [["Paired ratio", format(probe.response.ratio)],
+        ["Alignment", readable(probe.response.alignment)],
+        ["Low plane pixel", probe.response.low_point ? probe.response.low_point.join(", ") : "—"]] : [])] : []),
   ])}<img class="card-image" src="${e(app.url(`/cells/${cell}/panel.png`, {role}))}" alt="${cell} detail">
   <div class="toolbar">${download(app.url("/export/cells", {role, cell}), "Cell evidence")}</div></div>`;
 }

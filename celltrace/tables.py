@@ -23,7 +23,8 @@ COLUMNS = {
         "peak_contrast", "axis_degrees", "endpoints", "junctions", "paths",
     ),
     "response": (
-        "cell", "string", "expected_pixels", "common_pixels", "stable_pixels", "support", "ratio", "ratio_p10",
+        "cell", "string", "expected_pixels", "common_pixels", "aligned_pixels", "stable_pixels",
+        "alignment_state", "aligned_fraction", "alignment_note", "support", "ratio", "ratio_p10",
         "ratio_p90", "relative", "weak_fraction", "assessment",
     ),
     "strings": (

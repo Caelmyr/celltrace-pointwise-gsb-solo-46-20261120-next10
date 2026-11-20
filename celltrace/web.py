@@ -17,10 +17,11 @@ from .model import (
     CAPTURE_ROLES, MAX_PACKAGE_BYTES, MAX_UPLOAD_BYTES, SENSOR_ROLES, Issue,
     choice, integer, mapping, parse_cell, sequence, text,
 )
-from .pair_views import full_window, pair_result, region_from_body
+from .pair_views import correspondence_result, full_window, pair_result, region_from_body
 from .placement_check import paint_placement_diagnostics, placement_report, placement_rows
 from .plots import reference_plot, transect_plot
 from .raster_export import float_plane, grid_contact_sheet, write_cell_bundle
+from .response import probe_response
 from .render import (
     RenderOptions, cell_crop, placement_preview, polygon_preview, render_layer, source_preview,
 )
@@ -246,6 +247,29 @@ def build_app(data_dir: str) -> Flask:
         if fmt == "data":
             return jsonify(values)
         return content_response(values, "image/png")
+
+    @app.get("/api/inspections/<identifier>/correspondence/<view>")
+    def correspondence_view(identifier, view):
+        choice(view, "Correspondence view", frozenset(("data", "image")))
+        item = store.get(identifier)
+        if view == "data":
+            x = integer(request.args.get("x"), "Plane x", 0, item.plane.width - 1)
+            y = integer(request.args.get("y"), "Plane y", 0, item.plane.height - 1)
+            with engine.slots:
+                comparison = engine.compare(item)
+                point = probe_response(comparison.data, x, y)
+            return jsonify({
+                "x": x, "y": y, "revision": item.revision,
+                "high": item.selected("high").id, "low": item.selected("low").id,
+                "comparison": point,
+            })
+        with engine.slots:
+            content = correspondence_result(
+                engine, item, request.args.get("x"), request.args.get("y"),
+                choice(request.args.get("contrast", "shared"), "Image scaling", frozenset(("shared", "individual"))),
+                request.args.get("gamma", "0.8"),
+            )
+        return content_response(content, "image/png")
 
     @app.get("/api/inspections/<identifier>/layer/<kind>.png")
     def layer(identifier, kind):

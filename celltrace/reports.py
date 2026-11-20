@@ -250,20 +250,26 @@ def image_title(kind):
 
 def report_highlights(sections):
     metrics = (
-        ("intensity", "eligible_cells", "Cells with supported intensity"),
-        ("quality", "clipped_pixels", "Clipped plane pixels"),
-        ("quality", "calibration_gap_pixels", "Plane pixels with invalid reference"),
-        ("dark", "count", "Dark regions"),
-        ("dark", "dark_fraction", "Dark fraction of measured area"),
-        ("cracks", "count", "Trace candidates"),
-        ("cracks", "trace_length_mm", "Candidate trace length in mm"),
-        ("strings", "groups_with_flags", "Strings with review flags"),
-        ("response", "weak_cells", "Cells with low relative response"),
+        ("intensity", ("eligible_cells",), "Cells with supported intensity"),
+        ("quality", ("clipped_pixels",), "Clipped plane pixels"),
+        ("quality", ("calibration_gap_pixels",), "Plane pixels with invalid reference"),
+        ("dark", ("count",), "Dark regions"),
+        ("dark", ("dark_fraction",), "Dark fraction of measured area"),
+        ("cracks", ("count",), "Trace candidates"),
+        ("cracks", ("trace_length_mm",), "Candidate trace length in mm"),
+        ("strings", ("groups_with_flags",), "Strings with review flags"),
+        ("response", ("weak_cells",), "Cells with low relative response"),
+        ("response", ("alignment", "cells_recapture"), "Cells to recapture for the ratio"),
     )
-    return [
-        (label, sections[kind]["summary"][metric])
-        for kind, metric, label in metrics if kind in sections
-    ]
+    output = []
+    for kind, path, label in metrics:
+        if kind not in sections:
+            continue
+        value = sections[kind]["summary"]
+        for key in path:
+            value = value[key]
+        output.append((label, value))
+    return output
 
 
 def shown(value):

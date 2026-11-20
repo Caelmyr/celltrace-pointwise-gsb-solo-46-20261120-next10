@@ -53,6 +53,31 @@ def summarize_for_issue(inspection, engine: Engine, events: list[dict]) -> dict:
             messages.append(f"Response evidence is unavailable. {error}")
         else:
             sections["response"] = {"summary": result["summary"], "records": len(result["rows"])}
+    merge = engine.merge_report(inspection)
+    if merge.get("enabled"):
+        summary = merge["summary"]
+        sections["merge"] = {"summary": summary, "records": len(merge["rows"])}
+        if summary["unverified_regions"]:
+            messages.append(
+                f"{summary['unverified_regions']} short-exposure region"
+                f"{'' if summary['unverified_regions'] == 1 else 's'} could not be cross-checked. "
+                "Those pixels are excluded from the composed reading."
+            )
+        if summary["adjusted_regions"]:
+            messages.append(
+                f"{summary['adjusted_regions']} short-exposure region"
+                f"{'' if summary['adjusted_regions'] == 1 else 's'} needed a local seam gain. "
+                "The per-cell scale records the correction."
+            )
+        if summary["undecided_pixels"]:
+            messages.append(
+                f"{summary['undecided_pixels']} plane pixels remain without a conclusion in the paired exposure."
+            )
+        if inspection.merge.readings != "composite":
+            messages.append(
+                f"High-current readings currently use the {'short' if inspection.merge.readings == 'short' else 'long'} "
+                "exposure only; the composed reading is not the active measurement."
+            )
     active = {role: capture_info(inspection.captures[identifier]) for role, identifier in inspection.active.items()}
     return {
         "module": inspection.module,
@@ -65,6 +90,7 @@ def summarize_for_issue(inspection, engine: Engine, events: list[dict]) -> dict:
         "plane": [inspection.plane.width, inspection.plane.height],
         "grid": [inspection.plane.rows, inspection.plane.cols],
         "capture_inventory": active,
+        "exposure_merge": merge if merge.get("enabled") else None,
         "findings": findings,
         "sections": sections,
         "events": events[:14],
@@ -98,6 +124,8 @@ def report_documents(inspection, engine: Engine, preview: dict) -> tuple[dict, d
     }
     if "response" in preview["sections"]:
         media["response"] = render_layer(inspection, engine, "high", "response", RenderOptions(True, False))
+    if "merge" in preview["sections"]:
+        media["merge"] = render_layer(inspection, engine, "high", "merge", RenderOptions(True, False))
     tables = {}
     for kind in preview["sections"]:
         measurement = engine.table(inspection, "high", kind)
@@ -207,6 +235,28 @@ def printable(payload: dict, media: dict[str, bytes]) -> bytes:
         for row in report["findings"]
     ]
     highlights = report_highlights(report["sections"])
+    exposure = report.get("exposure_merge")
+    exposure_section = ""
+    if exposure:
+        summary = exposure["summary"]
+        exposure_section = (
+            "<section><h2>High-current exposure pair</h2>"
+            + definition_list([
+                ("Long exposure", f"{exposure['long']['exposure_ms']} ms · {exposure['long']['name']}"),
+                ("Short exposure", f"{exposure['short']['exposure_ms']} ms · {exposure['short']['name']}"),
+                ("Exposure scale", f"{summary['exposure_scale']}×"),
+                ("Active reading", exposure["readings"]),
+                ("Agreement tolerance", f"{summary['agreement']:.2f}"),
+                ("Corroborated", f"{summary['corroborated_pixels']} px"),
+                ("Long exposure only", f"{summary['long_only_pixels']} px"),
+                ("Short exposure only", f"{summary['short_only_pixels']} px"),
+                ("No conclusion", f"{summary['undecided_pixels']} px"),
+                ("Seam-adjusted regions", summary["adjusted_regions"]),
+                ("Unverified regions", summary["unverified_regions"]),
+            ])
+            + warnings(summary.get("messages", []))
+            + "</section>"
+        )
     origins = [
         [row["revision"], row["at"], row["action"]]
         for row in report["events"]
@@ -224,6 +274,7 @@ def printable(payload: dict, media: dict[str, bytes]) -> bytes:
       {definition_list(metadata)}
       <section><h2>Disposition</h2>{definition_list(decisions)}{warnings(report["messages"])}</section>
       <section><h2>Image evidence</h2><div class="figures">{pictures}</div></section>
+      {exposure_section}
       <section><h2>Measurements</h2>{definition_list(highlights)}</section>
       <section><h2>Reviewed findings</h2>
        {html_table(("Observation", "Cell", "Category", "State", "Source", "Note"), findings)}
@@ -245,6 +296,7 @@ def image_title(kind):
         "panel": "Grid with reviewed findings", "quality": "Usable coverage and image-quality flags",
         "dark": "Connected dark evidence", "cracks": "Thin dark-line candidates",
         "response": "Paired-current relative response",
+        "merge": "High-current exposure support partition",
     }[kind]
 
 
@@ -259,6 +311,8 @@ def report_highlights(sections):
         ("cracks", "trace_length_mm", "Candidate trace length in mm"),
         ("strings", "groups_with_flags", "Strings with review flags"),
         ("response", "weak_cells", "Cells with low relative response"),
+        ("merge", "short_only_pixels", "Plane pixels read from the short exposure"),
+        ("merge", "undecided_pixels", "Paired-exposure pixels without a conclusion"),
     )
     return [
         (label, sections[kind]["summary"][metric])

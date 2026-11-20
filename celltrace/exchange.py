@@ -4,7 +4,7 @@ from hashlib import sha256
 from .findings import validate_source_anchor
 from .geometry import transform_for
 from .images import decode_source, verify_capture
-from .inspection import MAX_INSPECTION_IMAGES, check_calibration
+from .inspection import MAX_INSPECTION_IMAGES, check_calibration, validate_merge
 from .model import Inspection, Issue, mapping, sequence, text, utcnow
 from .packets import PacketReader, PacketWriter
 from .store import Store, new_id
@@ -94,6 +94,7 @@ def parse_exchange(package: PacketReader):
     for placement in inspection.placements.values():
         transform_for(inspection.plane, placement)
     check_calibration(inspection)
+    validate_merge(inspection)
     return inspection, originals
 
 

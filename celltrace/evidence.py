@@ -9,7 +9,7 @@ from .engine import Engine
 from .findings import get_finding, measure_polygon, region_source_link, validate_source_anchor
 from .geometry import plane_polygon, project, transform_for
 from .images import compact_thumbnail, png_bytes
-from .model import Calibration, Inspection, Issue, Placement, Plane
+from .model import Calibration, ExposureMerge, Inspection, Issue, Placement, Plane
 from .packets import PacketWriter
 from .render import FINDING_COLORS, draw_tag, font, panel_preview, polygon_preview, source_preview
 from .store import Store, data_digest, serial_json
@@ -29,8 +29,18 @@ def historical_inspection(inspection: Inspection, finding) -> Inspection:
         checked = Placement.from_dict(placement, source.width, source.height)
         transform_for(plane, checked)
         placements[source.id] = checked
+    pair = anchor.get("exposure_pair")
+    if pair:
+        merge = ExposureMerge(
+            enabled=True, short_id=pair["short"], short_calibration=pair["short_calibration"],
+            agreement=pair["agreement"],
+            minimum_agreement_pixels=pair["minimum_agreement_pixels"],
+            readings=pair.get("readings", "composite"),
+        )
+    else:
+        merge = ExposureMerge(enabled=False)
     return replace(
-        inspection, plane=plane,
+        inspection, plane=plane, merge=merge,
         active={finding.source_role: source.id},
         calibration=Calibration.from_dict(anchor["calibration"]), placements=placements,
     )

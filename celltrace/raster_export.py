@@ -23,6 +23,13 @@ SUPPORT_CODING = {
     "invalid_reference": 4,
     "signal_floor": 8,
 }
+EXPOSURE_REGIME = {
+    0: "no support",
+    1: "mutually corroborated",
+    2: "long exposure only",
+    3: "short exposure only",
+    4: "no conclusion",
+}
 
 
 def raw_float_tiff(values: np.ndarray, source_description: str) -> bytes:
@@ -44,9 +51,27 @@ def bit_field(panel) -> np.ndarray:
     return bitmap
 
 
+def merge_field(result) -> np.ndarray:
+    """Codes for how the composed high-current plane assembled each pixel."""
+    return result.regime.astype(np.uint8)
+
+
 def observation_record(inspection: Inspection, context, kind: str, bounds=None):
     capture = context.capture
     placement = inspection.placements.get(capture.id)
+    calibration = inspection.merge.leg_calibration(inspection, capture)
+    pair = None
+    if context.merge is not None:
+        merge = context.merge
+        pair = {
+            "settings": asdict(inspection.merge),
+            "long": {"capture": merge.long_capture.id, "exposure_ms": merge.long_capture.exposure_ms},
+            "short": {"capture": merge.short_capture.id, "exposure_ms": merge.short_capture.exposure_ms},
+            "exposure_scale": merge.exposure_scale,
+            "reference_ratio": round(merge.reference_ratio, 6),
+            "short_floor": round(merge.short_floor, 6),
+            "summary": merge.report,
+        }
     return {
         "inspection": inspection.id,
         "revision": inspection.revision,
@@ -62,9 +87,12 @@ def observation_record(inspection: Inspection, context, kind: str, bounds=None):
         "configured_placement": asdict(placement) if placement else None,
         "plane_to_sensor": context.panel.matrix.tolist(),
         "calibration": context.panel.details,
+        "calibration_binding": asdict(calibration),
+        "exposure_pair": pair,
         "measurement_settings": asdict(inspection.analysis),
         "display_settings": asdict(inspection.display),
         "support_bits": SUPPORT_CODING,
+        "exposure_regime_bits": EXPOSURE_REGIME if pair else None,
         "values": "32-bit floating normalized and calibrated sensor codes. NaN samples are unavailable.",
         "coordinates": "Plane origin is the upper left edge. Pixel centers use half-integer coordinates.",
     }
@@ -86,7 +114,12 @@ def float_plane(engine: Engine, inspection: Inspection, role: str) -> bytes:
         packet.add("plane/signal.tiff", tiff, "image/tiff")
         packet.add("plane/support.png", bitmap, "image/png")
         packet.add("plane/preview.png", preview, "image/png")
-        packet.add("plane/measurement.json", serial_json(report), "application/json")
+        report_json = report
+        if context.merge is not None:
+            packet.add("plane/exposure-regime.png",
+                       png_bytes(Image.fromarray(merge_field(context.merge), mode="L")), "image/png")
+            report_json = {**report, "exposure_regime": context.merge.report}
+        packet.add("plane/measurement.json", serial_json(report_json), "application/json")
         return packet.finish({
             "schema": EXPORT_SCHEMA, "geometry": record, "plane_sha256": sha256(tiff).hexdigest(),
         })
@@ -130,6 +163,10 @@ def write_cell_bundle(engine: Engine, inspection: Inspection, role: str, request
                 "view": path, "bounds": cell.bounds, "measurement_inset": cell.interior,
                 "string": cell.string,
                 "measurements": intensity_rows[cell.id],
+                "exposure": (
+                    next((row for row in context.merge.records if row["cell"] == cell.id), None)
+                    if context.merge is not None else None
+                ),
                 "dark": grouped["dark"][cell.id],
                 "cracks": grouped["cracks"][cell.id],
                 "findings": [

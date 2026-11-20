@@ -5,6 +5,8 @@ export const escapeHtml = (value) => String(value ?? "").replaceAll("&", "&amp;"
 export const e = escapeHtml;
 
 export const ROLE = {high: "High current", low: "Low current", dark: "Dark reference", flat: "Flat reference"};
+export const MERGE_MODES = {composite: "Both exposures, exposure-normalized", long: "Long exposure only", short: "Short exposure only"};
+export const readingLabel = (reading) => reading?.mode ? (MERGE_MODES[reading.mode] || reading.mode) : "—";
 export const availableRoles = (inspection) => ["high", "low"].filter((role) => inspection.active[role]);
 export const readable = (value) => value ? String(value).replaceAll("_", " ") : "—";
 export const format = (value, count = 3) => typeof value === "number"

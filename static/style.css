@@ -158,6 +158,10 @@ strong, b { font-weight: 670; }
 .legend-line span { display: inline-flex; align-items: center; gap: 5px; }
 .legend-line i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: var(--color); }
 .tool-status { min-height: 18px; padding: 8px 11px 0; color: var(--muted); font-size: 12px; }
+.read-mode { padding: 7px 10px; border-bottom: 1px solid var(--line); background: #162126; }
+.read-mode button[aria-pressed="true"] { background: #264137; color: var(--accent); border-color: #426b5d; }
+.merge-card { border-color: #35564e; }
+.merge-card .card-header h2 { color: #cdeee0; }
 .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 7px; }
 .metric-grid > div { min-width: 0; border: 1px solid #31454a; border-radius: 6px; background: #1d2c31; padding: 8px; }
 .metric-grid strong { display: block; font: 610 16px var(--mono); color: #d7ebe5; overflow-wrap: anywhere; }

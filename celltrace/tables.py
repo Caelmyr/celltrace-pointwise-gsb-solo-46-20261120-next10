@@ -26,6 +26,10 @@ COLUMNS = {
         "cell", "string", "expected_pixels", "common_pixels", "stable_pixels", "support", "ratio", "ratio_p10",
         "ratio_p90", "relative", "weak_fraction", "assessment",
     ),
+    "merge": (
+        "cell", "string", "expected_pixels", "support", "corroborated", "long_only", "short_only",
+        "no_conclusion", "short_gain", "median", "flags",
+    ),
     "strings": (
         "string", "cells", "coverage", "median_relative", "p90_p10_span", "largest_step", "low_runs", "flags", "readings",
     ),

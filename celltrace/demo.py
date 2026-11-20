@@ -166,13 +166,29 @@ def make_demo(variant: str = "standard") -> tuple[Plane, list[DemoCapture]]:
     if variant == "stress":
         low_corners = ((-37, 45), (920, 62), (936, 538), (-26, 560))
     high = project_to_camera(scene.high, frame_shape, high_corners, False)
-    low = project_to_camera(scene.low, frame_shape, low_corners, True)
+    holder = np.zeros(frame_shape, dtype=np.float32)
+    y, x = np.ogrid[:frame_shape[0], :frame_shape[1]]
+    # A bright cell centre that saturates the long exposure but stays readable in the
+    # short exposure. It is panel signal, not stray light, so the composed reading may
+    # use it for cell levels and dark-region references.
+    glow = np.exp(-(((x - 790) / 26) ** 2 + ((y - 90) / 20) ** 2)) * 0.78
+    holder += glow
+    high = high + holder
+    low = project_to_camera(scene.low, frame_shape, low_corners, True) + holder * 0.12
+    short = project_to_camera(scene.high, frame_shape, high_corners, False) + holder
     dark, flat = sensor_components(frame_shape, rng)
     gain = (flat - dark) / 0.46
-    y, x = np.ogrid[:frame_shape[0], :frame_shape[1]]
-    hotspot = np.exp(-(((x - 800) / 36) ** 2 + ((y - 116) / 28) ** 2)) * 0.84
-    high = high * gain + dark + hotspot
+    high = high * gain + dark
     low = low * gain + dark + rng.normal(0, 0.002, low.shape).astype(np.float32)
+    short_dark = dark * 0.12
+    short_flat = flat * 0.12
+    short = short * gain * 0.12 + short_dark
+    if variant == "stress":
+        # A local illumination difference between the two exposures, only where the
+        # long exposure is clipped. The composed plane must detect and correct the
+        # seam rather than report it as a dark edge.
+        recovery = np.exp(-((((x - 800) / 42) ** 2 + ((y - 116) / 34) ** 2) ** 1.6))
+        short = short * (1 + 0.16 * recovery)
     return plane, [
         DemoCapture("high", f"SYN-{variant}-high.png", synthetic_bytes(high), high_corners,
                     "identity", 100, 8.5),
@@ -182,4 +198,10 @@ def make_demo(variant: str = "standard") -> tuple[Plane, list[DemoCapture]]:
                     "identity", 100, None),
         DemoCapture("flat", f"SYN-{variant}-flat.png", synthetic_bytes(flat), None,
                     "identity", 100, None),
+        DemoCapture("high", f"SYN-{variant}-high-short.png", synthetic_bytes(short), high_corners,
+                    "identity", 12, 8.5),
+        DemoCapture("dark", f"SYN-{variant}-dark-short.png", synthetic_bytes(short_dark), None,
+                    "identity", 12, None),
+        DemoCapture("flat", f"SYN-{variant}-flat-short.png", synthetic_bytes(short_flat), None,
+                    "identity", 12, None),
     ]

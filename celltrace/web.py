@@ -1,4 +1,4 @@
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -6,12 +6,13 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.exceptions import BadRequest, HTTPException, RequestEntityTooLarge
 
 from .banding import capture_reference_profile, profile_summary, reference_band_image
+from .composite import region_merge_reading
 from .engine import EL_LAYERS, MEASUREMENT_PLANES, Engine
 from .evidence import evidence_response
 from .exchange import create_exchange, import_exchange, preview_exchange
 from .geometry import cells_for
 from .images import png_bytes
-from .inspection import Inspections, inspection_payload
+from .inspection import Inspections, inspection_payload, merge_settings
 from .lot import LotReview
 from .model import (
     CAPTURE_ROLES, MAX_PACKAGE_BYTES, MAX_UPLOAD_BYTES, SENSOR_ROLES, Issue,
@@ -293,6 +294,31 @@ def build_app(data_dir: str) -> Flask:
             result = engine.pixel(item, get_role(), request.args.get("x"), request.args.get("y"), on("pair"))
         return jsonify(result)
 
+    @app.get("/api/inspections/<identifier>/merge")
+    def exposure_merge(identifier):
+        item = store.get(identifier)
+        with engine.slots:
+            report = engine.merge_report(item)
+        return jsonify(report)
+
+    @app.post("/api/inspections/<identifier>/merge/preview")
+    def preview_merge(identifier):
+        item = store.get(identifier)
+        values = json_body()
+        candidate = replace(item, merge=merge_settings(item, values))
+        with engine.slots:
+            return jsonify(engine.merge_report(candidate))
+
+    @app.get("/api/inspections/<identifier>/merge/cell/<cell_id>")
+    def merge_cell(identifier, cell_id):
+        item = store.get(identifier)
+        with engine.slots:
+            result = engine.cell_details(item, "high", cell_id)
+        return jsonify({
+            "cell": result["cell"], "merge": result["merge"],
+            "reading": result["reading"], "single": result.get("single"),
+        })
+
     @app.get("/api/inspections/<identifier>/cells/<cell_id>")
     def cell(identifier, cell_id):
         item = store.get(identifier)
@@ -317,11 +343,13 @@ def build_app(data_dir: str) -> Flask:
         role = choice(raw.get("role", "high"), "EL capture role", SENSOR_ROLES)
         with engine.slots:
             report, mask, context = engine.polygon(item, role, raw.get("points"), raw.get("finding"))
-            if raw.get("format") == "png":
-                return content_response(
-                    png_bytes(polygon_preview(context, mask, item.display)), "image/png",
-                    f"{item.module}-region.png",
-                )
+        if raw.get("format") == "png":
+            return content_response(
+                png_bytes(polygon_preview(context, mask, item.display)), "image/png",
+                f"{item.module}-region.png",
+            )
+        if getattr(mask, "shape", None) is not None and context.merge is not None:
+            report["merge"] = region_merge_reading(context.merge, mask)
         return jsonify(report)
 
     @app.post("/api/inspections/<identifier>/transect")

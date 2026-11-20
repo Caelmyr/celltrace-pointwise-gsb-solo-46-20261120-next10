@@ -13,16 +13,42 @@ from .store import data_digest, new_id
 
 
 def plane_anchor(inspection: Inspection, source_role: str) -> dict:
-    active = inspection.selected(source_role)
+    """Freeze exactly the reading a finding was drawn on.
+
+    In a composed high-current reading the long image stays the anchor and the pair is
+    recorded with it. A single-leg reading records the leg it actually shows, so a
+    finding drawn on the short exposure binds that original rather than the long one.
+    """
+    selected = inspection.selected(source_role)
+    merge = inspection.merge
+    pair = None
+    if source_role == "high" and merge.enabled and merge.short_id is not None:
+        if merge.readings == "short" and merge.short_id in inspection.captures:
+            active = inspection.captures[merge.short_id]
+        else:
+            active = selected
+        if merge.readings == "composite":
+            short = inspection.captures.get(merge.short_id)
+            pair = {
+                "enabled": True, "short": merge.short_id, "readings": merge.readings,
+                "agreement": merge.agreement,
+                "minimum_agreement_pixels": merge.minimum_agreement_pixels,
+                "short_calibration": asdict(merge.short_calibration),
+                "short_digest": short.digest if short else None,
+            }
+    else:
+        active = selected
     placement = inspection.placements.get(active.id)
-    dark = inspection.captures.get(inspection.calibration.dark_id)
-    flat = inspection.captures.get(inspection.calibration.flat_id)
+    calibration = inspection.merge.leg_calibration(inspection, active)
+    dark = inspection.captures.get(calibration.dark_id)
+    flat = inspection.captures.get(calibration.flat_id)
     values = {
         "image": active.id, "digest": active.digest,
         "placement": asdict(placement) if placement is not None else None,
         "plane": asdict(inspection.plane),
-        "calibration": asdict(inspection.calibration),
+        "calibration": asdict(calibration),
         "reference_digests": {"dark": dark.digest if dark else None, "flat": flat.digest if flat else None},
+        "exposure_pair": pair,
     }
     return {"signature": data_digest(values), **values}
 
@@ -65,6 +91,20 @@ def validate_source_anchor(inspection: Inspection, finding: Finding):
         reference = inspection.captures.get(reference_id)
         if reference is None or reference.role != role or reference.digest != refs.get(role):
             raise Issue("A finding refers to a missing calibration original.")
+    pair = anchor.get("exposure_pair")
+    if pair is not None:
+        short_id = pair.get("short")
+        short = inspection.captures.get(short_id)
+        if short is None or short.role != "high" or short.digest != pair.get("short_digest"):
+            raise Issue("A finding refers to a missing paired exposure.")
+        short_calibration = Calibration.from_dict(pair.get("short_calibration"))
+        for role in ("dark", "flat"):
+            reference_id = getattr(short_calibration, f"{role}_id")
+            if reference_id is None:
+                continue
+            reference = inspection.captures.get(reference_id)
+            if reference is None or reference.role != role:
+                raise Issue("A finding refers to a missing short-exposure calibration original.")
 
 
 def validate_anchor_geometry(anchor: dict, finding: Finding, image):

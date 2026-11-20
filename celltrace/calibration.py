@@ -142,7 +142,7 @@ def project_panel(corrected: CalibratedImage, sampling: SamplingMap) -> PanelIma
 
 def panel_calibration_report(panel: PanelImage) -> dict:
     count = panel.signal.size
-    return {
+    report = {
         **panel.details,
         "plane_pixels": count,
         "coverage": round(float(panel.any_support.sum() / count), 6),
@@ -152,6 +152,14 @@ def panel_calibration_report(panel: PanelImage) -> dict:
         "floor_signal": round(float((panel.floor_hit & panel.valid).sum() / count), 6),
         "signal": distribution(panel.signal[panel.valid]),
     }
+    if isinstance(panel.details.get("long"), dict):
+        report["composed"] = True
+        report["legs"] = {
+            leg: {key: value for key, value in panel.details[leg].items() if key != "messages"}
+            for leg in ("long", "short")
+            if isinstance(panel.details.get(leg), dict)
+        }
+    return report
 
 
 def support_reason(panel: PanelImage, x: int, y: int) -> list[str]:

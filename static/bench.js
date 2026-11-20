@@ -1,15 +1,16 @@
 import {
   $, $$, ROLE, availableRoles, badge, bindCanvas, button, changeLabel, definition, download,
   drawPoints, e, field, format, histogram, itemCard, metrics, normalizedPoint,
-  num, percent, request, saveBlob, submit, table, wireForm,
+  num, percent, readingLabel, request, saveBlob, submit, table, wireForm,
 } from "./ui.js";
 import {showCalibration, showPlacement, showPlacementReview} from "./captures.js";
+import {showCellReadingDialog, showExposureMerge, showSingleReading} from "./exposure.js";
 import {showFindingForm} from "./reviews.js";
 
 const LAYERS = [
   ["panel", "EL image"], ["support", "Support"], ["quality", "Quality"], ["intensity", "Cell levels"],
   ["dark", "Dark regions"], ["cracks", "Crack traces"], ["response", "Current response"],
-  ["strings", "Strings"], ["calibration", "Calibration"],
+  ["strings", "Strings"], ["calibration", "Calibration"], ["merge", "Exposure merge"],
 ];
 const TABS = Object.fromEntries(LAYERS);
 const LEGENDS = {
@@ -22,6 +23,8 @@ const LEGENDS = {
   response: [["#a1387b", "Weaker"], ["#f6ca78", "Reference range"], ["#20579e", "Stronger"]],
   strings: [["#a1387b", "Lower relative signal"], ["#40aeac", "Higher relative signal"]],
   calibration: [["#dc9b49", "Invalid reference"], ["#38649d", "Signal at floor"]],
+  merge: [["#78e2bd", "Both exposures agree"], ["#e8c578", "Long exposure only"],
+    ["#89beff", "Short exposure only"], ["#ec7e9b", "No conclusion"], ["#3e3a52", "No support"]],
 };
 
 const COLS = {
@@ -37,6 +40,9 @@ const COLS = {
     ["Weak px", "weak_fraction", percent], ["Assessment", "assessment"]],
   strings: [["String", "string"], ["Support", "coverage", percent], ["Median", "median_relative"], ["Range", "p90_p10_span"],
     ["Flags", "flags", join], ["Cells", "cells", join]],
+  merge: [["Cell", "cell"], ["Support", "support", percent], ["Both agree", "corroborated", percent],
+    ["Long only", "long_only", percent], ["Short only", "short_only", percent], ["No conclusion", "no_conclusion", percent],
+    ["Short gain", "short_gain"], ["Flags", "flags", join]],
 };
 
 function join(x) { return x?.length ? x.join(", ") : "—"; }
@@ -53,11 +59,19 @@ export function renderWorkbench(app, root) {
     return;
   }
   if (ctx.layer === "response" && roles.length < 2) ctx.layer = "panel";
+  if (ctx.layer === "merge" && !app.case.merge?.enabled) ctx.layer = "panel";
   if (!roles.includes(ctx.role)) ctx.role = roles[0];
   const displayRole = ctx.layer === "response" ? "high" : ctx.role;
+  const merged = Boolean(app.case.merge?.enabled);
+  const readMode = merged ? app.case.merge.readings : "long";
   const roleButtons = roles.map((role) =>
     `<button type="button" data-role="${role}" aria-pressed="${role === displayRole}" ${ctx.layer === "response" ? "disabled" : ""}>${ROLE[role]}</button>`
   ).join("");
+  const readButtons = merged ? `<div class="toolbar read-mode" aria-label="High-current reading">
+    ${[["composite", "Merged exposures"], ["long", "Long only"], ["short", "Short only"]].map(([key, label]) =>
+      `<button type="button" class="compact" data-reading="${key}" aria-pressed="${readMode === key}"
+        ${item.state === "issued" ? "disabled" : ""}>${label}</button>`).join("")}
+    </div>` : "";
   const modes = [
     ["probe", "Probe"], ["polygon", "Region"], ["line", "Transect"], ["pair", "Compare pair"],
   ].map(([key, label]) => `<button type="button" class="compact" data-mode="${key}" aria-pressed="${ctx.mode === key}"
@@ -70,9 +84,11 @@ export function renderWorkbench(app, root) {
         ${button("display-settings", "Levels", "compact", item.state === "issued")}
         <button type="button" class="compact" id="zoom-view" title="Cycle image zoom">${ctx.zoom}%</button></div>
       </div>
+      ${readButtons}
       <div class="layers" aria-label="Measurement layers">${LAYERS.map(([key, label]) => `
         <button type="button" data-layer="${key}" class="${key === ctx.layer ? "selected" : ""}"
-        ${key === "response" && roles.length < 2 ? "disabled" : ""}>${label}</button>`).join("")}</div>
+        ${key === "response" && roles.length < 2 ? "disabled" : ""}
+        ${key === "merge" && !merged ? "disabled" : ""}>${label}</button>`).join("")}</div>
       <div class="viewer-well">
         <div class="viewer-viewport" id="bench-viewport" style="width:${ctx.zoom}%">
           <img id="plane-image" width="${item.plane.width}" height="${item.plane.height}" alt="${e(TABS[ctx.layer])} for ${e(item.module)}"
@@ -85,6 +101,7 @@ export function renderWorkbench(app, root) {
         ${legend(ctx.layer)}
       </div>
     </section>
+    ${mergeBanner(app, readMode)}
     <section class="card"><div class="card-header"><h2>Image tools</h2><div class="toolbar">${modes}</div></div>
       <p class="tool-status" id="tool-message"></p>
       <div class="card-pad" id="tool-controls"></div>
@@ -156,6 +173,25 @@ export function renderWorkbench(app, root) {
       }
     };
   });
+  $$("[data-reading]", root).forEach((node) => {
+    node.onclick = async () => {
+      const reading = node.dataset.reading;
+      if (reading === readMode) return;
+      try {
+        await app.patch("merge", {
+          enabled: true, short_id: item.merge.short_id, readings: reading,
+          short_calibration: item.merge.short_calibration,
+          agreement: item.merge.agreement, minimum_agreement_pixels: item.merge.minimum_agreement_pixels,
+        }, reading === "composite"
+          ? "High-current reading uses both exposures."
+          : `High-current reading uses only the ${reading === "short" ? "short" : "long"} exposure.`);
+      } catch (error) {
+        app.fail(error);
+      }
+    };
+  });
+  $("#exposure-merge-settings", root)?.addEventListener("click", () => showExposureMerge(app));
+  $("#exposure-merge-compare", root)?.addEventListener("click", () => showSingleReading(app));
   $("#toggle-grid", root).onclick = () => { ctx.grid = !ctx.grid; app.render(); };
   $("#zoom-view", root).onclick = (event) => {
     ctx.zoom = {100: 125, 125: 160, 160: 200, 200: 100}[ctx.zoom];
@@ -164,7 +200,7 @@ export function renderWorkbench(app, root) {
   };
   $("#display-settings", root).onclick = () => displayDialog(app);
   $("#pack-images", root).onclick = () => cellExportDialog(app, displayRole);
-  $("#edit-placement", root).onclick = () => showPlacement(app, item.captures[item.active[displayRole]]);
+  $("#edit-placement", root).onclick = () => showPlacement(app, item.captures[shownCaptureId(app, displayRole)]);
   $("#diagnose-placement", root).onclick = () => showPlacementReview(app, displayRole);
   $("#bench-calibration", root).onclick = () => showCalibration(app);
   $("#measurement-settings", root)?.addEventListener("click", () => analysisDialog(app));
@@ -179,17 +215,47 @@ function legend(layer) {
     `<span><i style="--color:${color}"></i>${label}</span>`).join("")}</span>`;
 }
 
+function mergeBanner(app, readMode) {
+  const merge = app.case.merge;
+  if (!merge?.enabled) {
+    return `<section class="card merge-card"><div class="card-header"><h2>High-current exposure</h2>
+      ${button("exposure-merge-settings", "Pair exposures", "compact", app.case.state === "issued")}</div>
+      <div class="card-pad"><p class="small-copy">One high-current image is read directly. Pair a shorter exposure to
+      keep measuring inside its overexposed patch.</p></div></section>`;
+  }
+  const short = app.case.captures[merge.short_id];
+  const reading = readMode === "composite" ? "both exposures, exposure-normalized"
+    : readMode === "short" ? "the short exposure only" : "the long exposure only";
+  return `<section class="card merge-card"><div class="card-header"><h2>High-current exposure</h2>
+      ${button("exposure-merge-settings", "Settings", "compact", app.case.state === "issued")}</div>
+    <div class="card-pad section-stack"><p class="small-copy">Reading ${e(reading)}.
+      Paired with ${e(short?.name || "a missing image")} · ${format(short?.exposure_ms)} ms.
+      Probe a pixel to see which exposure supplied it and where support is missing.</p>
+      <div class="toolbar"><button type="button" class="compact" id="exposure-merge-compare"
+        ${app.case.state === "issued" ? "disabled" : ""}>Compare with the single image</button></div></div></section>`;
+}
+
+function shownCaptureId(app, role) {
+  const merge = app.case.merge;
+  if (role === "high" && merge?.enabled && merge.readings === "short") return merge.short_id;
+  return app.case.active[role];
+}
+
 function selectedCapture(app, role) {
-  const selected = app.case.captures[app.case.active[role]];
+  const merge = app.case.merge;
+  const shown = app.case.captures[shownCaptureId(app, role)] || app.case.captures[app.case.active[role]];
+  const note = role === "high" && merge?.enabled
+    ? `<p class="small-copy">Shown as ${merge.readings === "short" ? "the short exposure" : "the long exposure"}
+       ${merge.readings === "composite" ? "composed with the short exposure" : "read on its own"}.</p>`
+    : "";
   return `<section class="card"><div class="card-header"><h2>Selected capture</h2>${badge(ROLE[role], "neutral")}</div>
     <div class="card-pad section-stack">${definition([
-      ["Image", selected.name], ["Native size", `${selected.width} × ${selected.height} px`], ["Samples", `${selected.bit_depth} bit`],
-      ["Drive", selected.current_a == null ? "—" : `${selected.current_a} A`], ["Exposure", `${selected.exposure_ms} ms`],
-    ])}<div class="toolbar">${button("edit-placement", "Corner placement")}
+      ["Image", shown.name], ["Native size", `${shown.width} × ${shown.height} px`], ["Samples", `${shown.bit_depth} bit`],
+      ["Drive", shown.current_a == null ? "—" : `${shown.current_a} A`], ["Exposure", `${shown.exposure_ms} ms`],
+    ])}${note}<div class="toolbar">${button("edit-placement", "Corner placement")}
       ${button("diagnose-placement", "Check grid")}
       ${button("bench-calibration", "References")}</div></div></section>`;
 }
-
 function layerUrl(app, role, cell = "") {
   const ctx = app.workspace;
   return app.url(`/layer/${ctx.layer}.png`, {
@@ -223,6 +289,14 @@ function metricRows(kind, value) {
       get("Ratio reference", "reference_ratio"), get("Overlap pixels", "shared_pixels"),
     ],
     strings: [get("Strings", "groups"), get("Flagged strings", "groups_with_flags")],
+    merge: [
+      ["Both exposures agree", percent(value.corroborated_pixels / Math.max(1, value.pixels))],
+      ["Long only", percent(value.long_only_pixels / Math.max(1, value.pixels))],
+      ["Short only", percent(value.short_only_pixels / Math.max(1, value.pixels))],
+      ["No conclusion", percent(value.undecided_pixels / Math.max(1, value.pixels))],
+      get("Exposure scale", "exposure_scale"), get("Level offset", "reference_ratio"),
+      get("Adjusted regions", "adjusted_regions"), get("Unverified regions", "unverified_regions"),
+    ],
   }[kind] || [];
 }
 
@@ -238,16 +312,35 @@ async function loadLayer(app, root, kind, role, version) {
     result.innerHTML = `<div class="card-header"><h2>${e(TABS[kind])} measurements</h2><div class="toolbar">
       ${button("measurement-settings", "Thresholds", "compact", app.case.state === "issued")}
       ${download(app.url(`/measure/${kind}`, {role, format: "csv"}), "CSV")}</div></div>`;
-    result.innerHTML += kind === "calibration"
-      ? `<div class="card-pad">${definition([
+    if (kind === "calibration") {
+      const legs = model.summary.legs || model.summary.pair;
+      result.innerHTML += `<div class="card-pad">${definition([
         ["Dark reference", model.summary.dark ? "Applied" : "Disabled or skipped"],
         ["Flat reference", model.summary.flat ? "Applied" : "Disabled or skipped"],
         ["Flat normalization", format(model.summary.flat_normalization)],
         ["Calibrated signal", format(model.summary.signal.median)],
-      ])}</div>`
-      : table(COLS[kind], model.rows, (row) => row.cell
+        ...(legs ? [
+          ["Long leg dark", legs.long?.dark ? "Applied" : "Disabled or skipped"],
+          ["Long leg flat", legs.long?.flat ? "Applied" : "Disabled or skipped"],
+          ["Short leg dark", legs.short?.dark ? "Applied" : "Disabled or skipped"],
+          ["Short leg flat", legs.short?.flat ? "Applied" : "Disabled or skipped"],
+        ] : []),
+      ])}</div>`;
+    } else if (kind === "merge") {
+      result.innerHTML += `<div class="card-pad">${definition([
+        ["Long exposure", `${model.summary.long_exposure_ms} ms · ${format(model.summary.long_capture)}`],
+        ["Short exposure", `${model.summary.short_exposure_ms} ms · ${format(model.summary.short_capture)}`],
+        ["Exposure scale", `${format(model.summary.exposure_scale)}×`],
+        ["Agreement tolerance", percent(model.summary.agreement)],
+        ["Short read floor", format(model.summary.short_floor, 5)],
+      ])}</div>` + table(COLS.merge, model.rows, (row) => row.cell
         ? `<button type="button" class="compact" data-cell="${e(row.cell)}" aria-label="Inspect ${e(row.cell)}">Inspect</button>`
         : "");
+    } else {
+      result.innerHTML += table(COLS[kind], model.rows, (row) => row.cell
+        ? `<button type="button" class="compact" data-cell="${e(row.cell)}" aria-label="Inspect ${e(row.cell)}">Inspect</button>`
+        : "");
+    }
     $$("[data-cell]", result).forEach((node) => {
       node.onclick = () => selectCell(app, root, role, node.dataset.cell);
     });
@@ -301,12 +394,42 @@ async function loadCell(app, root, role, cell) {
   plot.innerHTML = `<div class="section-stack">${definition([
     ["Cell", cell], ["String", value.string], ["Median signal", format(value.intensity.median)], ["Support", percent(value.intensity.support)],
     ["Dark regions", value.dark.length], ["Crack traces", value.cracks.length],
+    ...(value.merge ? [
+      ["Reading", readingLabel(value.reading)],
+      ["Both exposures agree", percent(value.merge.corroborated)],
+      ["Short exposure only", percent(value.merge.short_only)],
+      ["No conclusion", percent(value.merge.no_conclusion)],
+    ] : []),
+    ...(value.single?.intensity ? [
+      ["Single-exposure median", format(value.single.intensity.median)],
+      ["Single-exposure support", percent(value.single.intensity.support)],
+    ] : []),
     ...(probe ? [["Plane pixel", `${probe.x}, ${probe.y}`], ["Sensor point", probe.source.map((x) => format(x, 2)).join(", ")],
       ["Signal", format(probe.signal, 5)], ["Status", probe.warnings.join(", ") || "Usable"],
+      ...(probe.reading?.available ? [["Read from", probeReading(probe.reading)],
+        ["Pixel cross-check", probe.reading.mode === "composite" ? probe.reading.regime
+          : `${probe.reading.regime} when composed`]] : []),
       ...(probe.response ? [["Paired ratio", format(probe.response.ratio)]] : [])] : []),
   ])}<img class="card-image" src="${e(app.url(`/cells/${cell}/panel.png`, {role}))}" alt="${cell} detail">
-  <div class="toolbar">${download(app.url("/export/cells", {role, cell}), "Cell evidence")}</div></div>`;
+  <div class="toolbar">${download(app.url("/export/cells", {role, cell}), "Cell evidence")}
+    ${value.reading ? button("cell-single-reading", "Single-image reading") : ""}</div></div>`;
+  $("#cell-single-reading", plot)?.addEventListener("click", () => showCellReadingDialog(app, cell));
 }
+
+function probeReading(reading) {
+  const parts = [];
+  if (reading.mode && reading.mode !== "composite") {
+    parts.push(`${reading.mode === "short" ? "short" : "long"} exposure only`);
+  }
+  if (reading.used === "both") parts.push(`both exposures · ${reading.used_name}`);
+  else if (reading.used === "short") parts.push(`short exposure · ${reading.used_name}`);
+  else if (reading.used === "long") parts.push(`long exposure · ${reading.used_name}`);
+  else parts.push("no reading");
+  if (reading.short_region === "gain adjusted") parts.push("seam gain applied");
+  if (reading.local_ratio != null) parts.push(`local level ${format(reading.local_ratio, 4)}`);
+  return parts.join(" · ");
+}
+
 
 function configureTools(app, root, role, redraw) {
   const ctx = app.workspace;
@@ -373,10 +496,17 @@ async function measureRegion(app, tool, role) {
   output.textContent = "Measuring…";
   try {
     const result = await request(app.url("/polygon"), "POST", data);
+    const merge = result.merge;
     output.innerHTML = `<div class="section-stack">${metrics([
       ["Area pixels", format(result.pixels)], ["Support", percent(result.usable_fraction)],
       ["Area mm²", format(result.area_mm2)], ["Median signal", format(result.signal.median)],
-    ])}${histogram(result.histogram, "Region signal histogram")}
+    ])}${merge ? `<div class="metric-grid">
+      <div><strong>${percent(merge.corroborated)}</strong><small>Both exposures agree</small></div>
+      <div><strong>${percent(merge.short_only)}</strong><small>Short exposure only</small></div>
+      <div><strong>${percent(merge.no_conclusion)}</strong><small>No conclusion</small></div>
+      <div><strong>${merge.short_scale == null ? "—" : format(merge.short_scale, 4)}</strong><small>Short seam gain</small></div>
+      </div>${merge.no_conclusion > 0.02 ? `<p class="warning">Part of this region cannot be cross-checked between exposures. Treat the boundary at the patch as inconclusive rather than a dark edge.</p>` : ""}` : ""}
+    ${histogram(result.histogram, "Region signal histogram")}
     <div class="toolbar">${button("region-png", "Region PNG")}</div></div>`;
     $("#region-png", tool).onclick = () => downloadTool(app, "/polygon", data, "png");
   } catch (error) {
@@ -446,7 +576,11 @@ function compareDialog(app) {
       $("#pair-result", root).innerHTML = metrics([
         ["Shared pixels", format(detail.paired_pixels)], ["High only", format(detail.high_only)],
         ["Low only", format(detail.low_only)], ["Outside or invalid in both", format(detail.missing_both)],
-      ]);
+      ]) + (detail.high_reading ? `<p class="small-copy">High-current side:
+        ${detail.high_reading.mode === "composite" ? "both exposures composed"
+          : detail.high_reading.mode === "short" ? "short exposure only" : "long exposure only"}
+        · ${format(detail.high_reading.short_only_pixels)} px from the short exposure
+        · ${format(detail.high_reading.no_conclusion_pixels)} px without a conclusion.</p>` : "");
     } catch (error) {
       if (root.isConnected) $("#pair-result", root).innerHTML = `<p class="error">${e(error.message)}</p>`;
     }

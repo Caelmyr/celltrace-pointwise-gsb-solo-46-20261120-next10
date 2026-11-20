@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 from scipy import ndimage
 
 from .calibration import PanelImage
+from .composite import CORROBORATED, LONG_ONLY, MISSING, SHORT_ONLY, UNDECIDED
 from .engine import EL_LAYERS, MEASUREMENT_PLANES, Engine
 from .findings import finding_status
 from .geometry import Cell, plane_polygon
@@ -134,9 +135,32 @@ def render_base(inspection: Inspection, engine: Engine, role: str, kind: str):
     elif kind == "response":
         image = scalar_rgb(data.relative, data.eligible, (0.34, 1.32), DIVERGING)
         image = color_edges(image, data.weak, (247, 204, 106), 0.63)
+    elif kind == "merge":
+        image = merge_rgb(data, display)
     else:
         image = scalar_rgb(data.heat, data.support, (0.5, 1.3), DIVERGING)
     return image, context
+
+
+def merge_rgb(result, display: ViewSettings) -> Image.Image:
+    base = panel_preview(result.panel, display)
+    raster = np.array(base, dtype=np.uint8)
+    colors = {
+        CORROBORATED: ((120, 226, 189), 0.30),
+        LONG_ONLY: ((232, 197, 120), 0.44),
+        SHORT_ONLY: ((137, 190, 255), 0.48),
+        UNDECIDED: ((236, 126, 155), 0.55),
+        MISSING: ((62, 58, 82), 0.70),
+    }
+    for value, (color, opacity) in colors.items():
+        mask = result.regime == value
+        if mask.any():
+            raster[mask] = np.rint(raster[mask] * (1 - opacity) + np.asarray(color) * opacity).astype(np.uint8)
+    annotated = Image.fromarray(raster, "RGB")
+    border = result.regime == SHORT_ONLY
+    if border.any():
+        annotated = color_edges(annotated, border, (208, 228, 255), 0.72)
+    return annotated
 
 
 def render_layer(inspection: Inspection, engine: Engine, role: str, kind: str, options: RenderOptions) -> bytes:

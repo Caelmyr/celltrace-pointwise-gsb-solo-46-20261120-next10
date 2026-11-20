@@ -32,15 +32,25 @@ def comparability_key(item: LotRecord) -> tuple:
         inspection.plane.rows, inspection.plane.cols, src["bit_depth"], src["white_level"],
         None if src["current_a"] is None else round(src["current_a"], 3),
         round(src["exposure_ms"], 3), calibration.get("dark") is not None, calibration.get("flat") is not None,
+        src["exposure_pair"] is not None,
     )
 
 
 def source(entry: Inspection, calibration: dict) -> dict:
     high = entry.selected("high")
+    merge = entry.merge
+    pair = None
+    if merge.enabled and merge.short_id in entry.captures:
+        short = entry.captures[merge.short_id]
+        pair = {
+            "short": short.id, "short_exposure_ms": short.exposure_ms,
+            "readings": merge.readings, "agreement": merge.agreement,
+        }
     return {
         "capture": high.id, "digest": high.digest, "exposure_ms": high.exposure_ms, "current_a": high.current_a,
         "white_level": high.white_level, "bit_depth": high.bit_depth,
         "references": {"dark": calibration.get("dark"), "flat": calibration.get("flat")},
+        "exposure_pair": pair,
         "synthetic": high.synthetic,
     }
 
@@ -183,6 +193,7 @@ def group_records(records: list[LotRecord]) -> dict:
             "current_a": key[4],
             "exposure_ms": key[5],
             "references": {"dark": key[6], "flat": key[7]},
+            "paired_exposure": key[8],
             "supported_module_medians": distribution(np.asarray(qualified)),
             "captured_settings_match": key[4] is not None,
         }

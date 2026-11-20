@@ -2,6 +2,7 @@ import {
   $, $$, ROLE, badge, bindCanvas, button, definition, download, drawPoints, e, field, format,
   histogram, itemCard, metrics, normalizedPoint, num, percent, request, submit, table, wireForm,
 } from "./ui.js";
+import {showExposureMerge} from "./exposure.js";
 
 const SENSOR_AXIS = [["rows", "Sensor rows"], ["columns", "Sensor columns"]];
 const PLACEMENT_OPTIONS = [["identity", "As captured"], ["rotate180", "Rotate 180°"], ["mirror-x", "Mirror left to right"], ["mirror-y", "Mirror top to bottom"]];
@@ -16,10 +17,15 @@ export function renderCaptures(app, root) {
     if (!values.length) return "";
     return `<section><h2 class="section-title">${ROLE[role]}</h2><div class="capture-grid">${values.map((frame) => {
       const selected = active[role] === frame.id;
-      const assignedReference = Object.values(app.case.calibration).includes(frame.id);
+      const shortLeg = app.case.merge?.short_id === frame.id;
+      const assignedReference = [
+        ...Object.values(app.case.calibration),
+        ...Object.values(app.case.merge?.short_calibration || {}),
+      ].includes(frame.id);
       return `<article class="card"><img class="capture-preview" loading="lazy" alt="${e(frame.name)} preview"
         src="${e(app.url(`/captures/${frame.id}/thumbnail`))}">
         <div class="capture-info"><div class="toolbar">${selected ? badge("Selected") : ""}
+        ${shortLeg ? badge("Paired short exposure", "neutral") : ""}
         ${assignedReference ? badge("Applied reference", "neutral") : ""}</div>
         <h3>${e(frame.name)}</h3><p class="small-copy">${frame.width} × ${frame.height} · ${frame.bit_depth} bit · ${frame.exposure_ms} ms
         ${frame.current_a ? ` · ${frame.current_a} A` : ""}</p>
@@ -32,14 +38,20 @@ export function renderCaptures(app, root) {
         </div></div></article>`;
     }).join("")}</div></section>`;
   }).join("");
+  const highFrames = frames.filter((frame) => frame.role === "high");
   root.innerHTML = `<div class="page-stack">
     ${itemCard("Original image inventory", `<div class="toolbar">
       ${button("capture-upload", "Upload original", "primary", closed)}${button("capture-calibrate", "Assign references")}
+      ${button("capture-merge", app.case.merge?.enabled ? "High-current exposures" : "Pair high-current exposures",
+        "", closed || highFrames.length < 2)}
       ${button("reference-drift", "Compare reference captures", "", !REF_ROLES.some((role) => frames.filter((cap) => cap.role === role).length >= 2))}
-    </div>${frames.length ? "" : '<p class="empty-line">Grayscale 8- or 16-bit PNG and TIFF images. Maximum 22 MiB per original.</p>'}`)}
+    </div>${frames.length ? "" : '<p class="empty-line">Grayscale 8- or 16-bit PNG and TIFF images. Maximum 22 MiB per original.</p>'}
+    ${highFrames.length > 1 ? `<p class="small-copy">Two high-current exposures share one panel plane. The selected image is
+      the long exposure; each exposure keeps its own corners, references and display level.</p>` : ""}`)}
     ${content}</div>`;
   $("#capture-upload", root).onclick = () => uploadDialog(app);
   $("#capture-calibrate", root).onclick = () => showCalibration(app);
+  $("#capture-merge", root).onclick = () => showExposureMerge(app);
   $("#reference-drift", root).onclick = () => referenceComparisonDialog(app);
   $$("[data-action]", root).forEach((node) => {
     node.onclick = () => {

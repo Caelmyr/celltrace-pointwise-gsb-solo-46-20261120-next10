@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 import math
 import re
@@ -27,6 +27,7 @@ FINDING_STATES = frozenset(("open", "hold", "cleared", "confirmed"))
 FINDING_CATEGORIES = frozenset(("dark", "crack", "suspect", "capture", "general"))
 ORIENTATIONS = frozenset(("identity", "rotate180", "mirror-x", "mirror-y"))
 STRING_AXES = frozenset(("columns", "rows"))
+MERGE_READINGS = frozenset(("composite", "long", "short"))
 MAX_SOURCE_PIXELS = 8_000_000
 MAX_PLANE_PIXELS = 1_500_000
 MAX_UPLOAD_BYTES = 22 * 1024 * 1024
@@ -354,6 +355,49 @@ class Finding:
         )
 
 
+@dataclass(frozen=True)
+class ExposureMerge:
+    enabled: bool = False
+    short_id: str | None = None
+    short_calibration: Calibration = field(default_factory=Calibration)
+    agreement: float = 0.15
+    minimum_agreement_pixels: int = 30
+    readings: str = "composite"
+
+    @classmethod
+    def from_dict(cls, raw: dict):
+        raw = mapping(raw, "Exposure merge")
+        enabled = boolean(raw.get("enabled", False), "Exposure merge switch")
+        short_id = raw.get("short_id")
+        calibration = Calibration.from_dict(raw.get("short_calibration", {}))
+        readings = choice(raw.get("readings", "composite"), "High-current read mode", MERGE_READINGS)
+        return cls(
+            enabled,
+            file_id(short_id, "Short exposure image ID") if short_id else None,
+            calibration,
+            real(raw.get("agreement", 0.15), "Merge agreement tolerance", 0.01, 0.6),
+            integer(raw.get("minimum_agreement_pixels", 30), "Merge agreement sample size", 4, 4000),
+            readings,
+        )
+
+    def __post_init__(self):
+        if isinstance(self.short_calibration, dict):
+            object.__setattr__(self, "short_calibration", Calibration.from_dict(self.short_calibration))
+
+    def leg_calibration(self, inspection: "Inspection", capture: Capture) -> Calibration:
+        """The references that apply to one high-current leg."""
+        if self.short_id is not None and capture.id == self.short_id:
+            return self.short_calibration
+        return inspection.calibration
+
+    def checked_roles(self, captures: dict[str, Capture]) -> "ExposureMerge":
+        if self.short_id is not None:
+            short = captures.get(self.short_id)
+            if short is None or short.role != "high":
+                return replace(self, enabled=False, short_id=None)
+        return self
+
+
 @dataclass
 class Inspection:
     id: str
@@ -370,6 +414,7 @@ class Inspection:
     placements: dict[str, Placement] = field(default_factory=dict)
     plane: Plane = field(default_factory=Plane)
     calibration: Calibration = field(default_factory=Calibration)
+    merge: ExposureMerge = field(default_factory=ExposureMerge)
     display: ViewSettings = field(default_factory=ViewSettings)
     analysis: AnalysisSettings = field(default_factory=AnalysisSettings)
     findings: list[Finding] = field(default_factory=list)
@@ -424,6 +469,7 @@ class Inspection:
         state = choice(raw.get("state", "open"), "Inspection state", FLOW_STATES)
         if (state == "issued") != (issue is not None):
             raise Issue("Inspection state does not match its issued result.")
+        merge = ExposureMerge.from_dict(raw.get("merge", {})).checked_roles(captures)
         return cls(
             file_id(raw.get("id"), "Inspection ID"),
             text(raw.get("module"), "Module serial", 80),
@@ -439,6 +485,7 @@ class Inspection:
             placements,
             Plane.from_dict(raw.get("plane", asdict(Plane()))),
             Calibration.from_dict(raw.get("calibration", {})),
+            merge,
             ViewSettings.from_dict(raw.get("display", {})),
             AnalysisSettings.from_dict(raw.get("analysis", {})),
             findings,

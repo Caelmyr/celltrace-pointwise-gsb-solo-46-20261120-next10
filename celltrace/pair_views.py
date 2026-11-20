@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .engine import Engine
+from .composite import SHORT_ONLY, UNDECIDED
 from .geometry import Cell, cells_for
 from .images import grayscale_preview, png_bytes
 from .model import Inspection, Issue, real, xy_list
@@ -76,6 +77,7 @@ def views(engine: Engine, inspection: Inspection, window: PairWindow, contrast: 
     levels = common_contrast(contrast, h_signal, l_signal, h_valid, l_valid)
     first = grayscale_preview(h_signal, h_valid, *levels[0], gamma)
     second = grayscale_preview(l_signal, l_valid, *levels[1], gamma)
+    merge = high.merge
     meta = {
         "schema": PAIR_VIEW_SCHEMA,
         "plane": [inspection.plane.width, inspection.plane.height],
@@ -91,6 +93,13 @@ def views(engine: Engine, inspection: Inspection, window: PairWindow, contrast: 
         "contrast": contrast,
         "gamma": gamma,
         "window": (window.size_x, window.size_y),
+        "high_reading": (
+            {"mode": inspection.merge.readings,
+             "short_capture": merge.short_capture.id,
+             "short_only_pixels": int((merge.regime[region] == SHORT_ONLY).sum()),
+             "no_conclusion_pixels": int((merge.regime[region] == UNDECIDED).sum())}
+            if merge is not None else None
+        ),
         "signature": data_digest({"low": low.pixel_key, "high": high.pixel_key, "bounds": window.bounds}),
     }
     return first, second, meta

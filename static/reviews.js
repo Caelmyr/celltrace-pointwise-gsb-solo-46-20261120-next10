@@ -183,7 +183,8 @@ export async function renderLot(app, root) {
       <section class="card"><div class="card-header"><h2>Inspection measurements</h2></div>${records}</section>
       <section class="card"><div class="card-header"><h2>Acquisition groups</h2></div>
       ${table([["Group", "id"], ["Inspections", "count"], ["Grid", "grid", (x) => x.join(" × ")],
-        ["Samples", "bit_depth"], ["Current A", "current_a"], ["Exposure ms", "exposure_ms"]],
+        ["Samples", "bit_depth"], ["Current A", "current_a"], ["Exposure ms", "exposure_ms"],
+        ["High-current pair", "paired_exposure", (x) => x ? "Two exposures" : "Single"]],
       values.pools)}</section></div>`;
     $("#view-contact-sheet", root).onclick = () => {
       request(base("sheet"), "GET", null, true).then((raw) => {

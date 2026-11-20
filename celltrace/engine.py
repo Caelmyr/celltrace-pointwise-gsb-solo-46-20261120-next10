@@ -84,6 +84,14 @@ class Engine:
         panel = self.panels.get(key, lambda: self.calculate_panel(inspection, capture))
         return PanelContext(capture, panel, cells_for(inspection.plane), key)
 
+    def panel_context_for(self, inspection: Inspection, capture_id: str) -> PanelContext:
+        capture = inspection.capture(capture_id)
+        if capture.role not in SENSOR_ROLES:
+            raise Issue("This measurement needs a high- or low-current EL capture.", 409)
+        key = panel_identity(inspection, capture)
+        panel = self.panels.get(key, lambda: self.calculate_panel(inspection, capture))
+        return PanelContext(capture, panel, cells_for(inspection.plane), key)
+
     def calculate_panel(self, inspection: Inspection, capture: Capture) -> PanelImage:
         source = self.read_source(capture)
         dark = self.selected_reference(inspection, "dark")

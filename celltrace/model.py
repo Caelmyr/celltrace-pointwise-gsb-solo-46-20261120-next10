@@ -22,6 +22,7 @@ SENSOR_ROLES = frozenset(("high", "low"))
 FILE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 CELL_RE = re.compile(r"^R([0-9]{2})C([0-9]{2})$")
+REGION_RE = re.compile(r"^R[0-9]{2}C[0-9]{2}-D[0-9]{3}$")
 FLOW_STATES = frozenset(("open", "issued"))
 FINDING_STATES = frozenset(("open", "hold", "cleared", "confirmed"))
 FINDING_CATEGORIES = frozenset(("dark", "crack", "suspect", "capture", "general"))
@@ -34,6 +35,9 @@ MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 MAX_FINDINGS = 120
 MAX_POLYGON_POINTS = 48
 MAX_HISTORY = 80
+MAX_REVIEWS = 24
+MAX_REVIEW_LINKS = 240
+MAX_LINK_REGIONS = 40
 
 
 def utcnow() -> str:
@@ -354,6 +358,101 @@ class Finding:
         )
 
 
+def review_region(value: Any) -> dict:
+    value = mapping(value, "Review region")
+    region_id = value.get("id")
+    if not isinstance(region_id, str) or not REGION_RE.fullmatch(region_id):
+        raise Issue("A saved review region identifier is invalid.")
+    cell = value.get("cell")
+    if not isinstance(cell, str) or not CELL_RE.fullmatch(cell):
+        raise Issue("A saved review region cell is invalid.")
+    (cx, cy), = xy_list([value.get("center")], "Review region center", 1, 1, (0, 10000), (0, 10000))
+    flat = sequence(value.get("bounds"), "Review region bounds", 4, 4)
+    (x0, y0), (x1, y1) = xy_list(
+        [(flat[0], flat[1]), (flat[2], flat[3])], "Review region bounds", 2, 2, (0, 10000), (0, 10000),
+    )
+    if x1 <= x0 or y1 <= y0:
+        raise Issue("A saved review region has empty bounds.")
+    area = value.get("area_mm2")
+    if area is not None:
+        area = real(area, "Review region area", 0.0005, 10**7)
+    return {
+        "id": region_id, "cell": cell,
+        "center": [cx, cy], "bounds": [x0, y0, x1, y1],
+        "pixels": integer(value.get("pixels"), "Review region pixels", 1, MAX_PLANE_PIXELS),
+        "area_mm2": area,
+    }
+
+
+@dataclass(frozen=True)
+class ReviewLink:
+    id: str
+    before: tuple[dict, ...]
+    after: tuple[dict, ...]
+    note: str
+
+    @classmethod
+    def from_dict(cls, raw: dict):
+        raw = mapping(raw, "Review link")
+        before = tuple(review_region(value) for value in sequence(
+            raw.get("before", []), "Link earlier regions", 0, MAX_LINK_REGIONS
+        ))
+        after = tuple(review_region(value) for value in sequence(
+            raw.get("after", []), "Link later regions", 0, MAX_LINK_REGIONS
+        ))
+        if not before and not after:
+            raise Issue("A review link needs at least one dark region.")
+        return cls(
+            file_id(raw.get("id"), "Review link ID"),
+            before,
+            after,
+            text(raw.get("note", ""), "Link note", 400, allow_blank=True),
+        )
+
+
+@dataclass(frozen=True)
+class StepReview:
+    id: str
+    title: str
+    before_step: str
+    after_step: str
+    before_capture: str
+    after_capture: str
+    before_digest: str
+    after_digest: str
+    links: tuple[ReviewLink, ...]
+    anchor: dict
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_dict(cls, raw: dict):
+        raw = mapping(raw, "Step review")
+        links = [ReviewLink.from_dict(value) for value in sequence(
+            raw.get("links", []), "Review links", 0, MAX_REVIEW_LINKS
+        )]
+        if len({link.id for link in links}) != len(links):
+            raise Issue("Review link identifiers must be unique.")
+        before_capture = file_id(raw.get("before_capture"), "Earlier capture ID")
+        after_capture = file_id(raw.get("after_capture"), "Later capture ID")
+        if before_capture == after_capture:
+            raise Issue("A step review compares two different captures.")
+        return cls(
+            file_id(raw.get("id"), "Review ID"),
+            text(raw.get("title"), "Review title", 120),
+            text(raw.get("before_step"), "Earlier process step", 80),
+            text(raw.get("after_step"), "Later process step", 80),
+            before_capture,
+            after_capture,
+            sha256_id(raw.get("before_digest")),
+            sha256_id(raw.get("after_digest")),
+            tuple(links),
+            mapping(raw.get("anchor"), "Review source anchor"),
+            text(raw.get("created_at"), "Review creation time", 100),
+            text(raw.get("updated_at"), "Review edit time", 100),
+        )
+
+
 @dataclass
 class Inspection:
     id: str
@@ -373,6 +472,7 @@ class Inspection:
     display: ViewSettings = field(default_factory=ViewSettings)
     analysis: AnalysisSettings = field(default_factory=AnalysisSettings)
     findings: list[Finding] = field(default_factory=list)
+    reviews: list[StepReview] = field(default_factory=list)
     issue: dict | None = None
 
     def to_dict(self) -> dict:
@@ -418,6 +518,19 @@ class Inspection:
         )]
         if len({finding.id for finding in findings}) != len(findings):
             raise Issue("Finding identifiers must be unique.")
+        reviews = [StepReview.from_dict(value) for value in sequence(
+            raw.get("reviews", []), "Step reviews", 0, MAX_REVIEWS
+        )]
+        if len({review.id for review in reviews}) != len(reviews):
+            raise Issue("Step review identifiers must be unique.")
+        for review in reviews:
+            for capture_id, digest in (
+                (review.before_capture, review.before_digest),
+                (review.after_capture, review.after_digest),
+            ):
+                capture = captures.get(capture_id)
+                if capture is None or capture.role not in SENSOR_ROLES or capture.digest != digest:
+                    raise Issue("A step review refers to an invalid EL capture.")
         issue = raw.get("issue")
         if issue is not None:
             issue = mapping(issue, "Issued result")
@@ -442,5 +555,6 @@ class Inspection:
             ViewSettings.from_dict(raw.get("display", {})),
             AnalysisSettings.from_dict(raw.get("analysis", {})),
             findings,
+            reviews,
             issue,
         )

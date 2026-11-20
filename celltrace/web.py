@@ -26,7 +26,10 @@ from .render import (
 )
 from .reference_review import compare_canvas, compare_references, reference_result
 from .reports import issue_report, summarize_for_issue
-from .store import Store
+from .step_review import (
+    get_review, resolve_links, review_computed, review_image, review_status, stale_payload,
+)
+from .store import Store, data_digest
 from .tables import csv_data
 
 
@@ -362,6 +365,58 @@ def build_app(data_dir: str) -> Flask:
         content, mime = data
         name = f"{item.module}-finding.zip" if view == "packet" else None
         return content_response(content, mime, name)
+
+    @app.post("/api/inspections/<identifier>/reviews")
+    def create_review(identifier):
+        values = json_body()
+        return file_version(service.add_review(identifier, values.get("revision"), values))
+
+    @app.put("/api/inspections/<identifier>/reviews/<review_id>")
+    def edit_review(identifier, review_id):
+        values = json_body()
+        item = service.checked(identifier, values.get("revision"))
+        review = get_review(item, review_id)
+        links = None
+        if "links" in values:
+            if review_status(item, review) != "current":
+                raise Issue(
+                    "The review source changed. Saved groups stay as recorded; start a new review to regroup.",
+                    409,
+                )
+            with engine.slots:
+                links = resolve_links(review_computed(engine, item, review), values.get("links"))
+        return file_version(service.change_review(identifier, values.get("revision"), review_id, values, links))
+
+    @app.delete("/api/inspections/<identifier>/reviews/<review_id>")
+    def remove_review(identifier, review_id):
+        return file_version(service.remove_review(identifier, json_body().get("revision"), review_id))
+
+    @app.get("/api/inspections/<identifier>/reviews/<review_id>/data")
+    def review_data(identifier, review_id):
+        item = store.get(identifier)
+        review = get_review(item, review_id)
+        status = review_status(item, review)
+        if status != "current":
+            return jsonify(stale_payload(item, review, status))
+        with engine.slots:
+            return jsonify(review_computed(engine, item, review))
+
+    @app.get("/api/inspections/<identifier>/reviews/<review_id>/image/<side>.png")
+    def review_picture(identifier, review_id, side):
+        choice(side, "Review side", frozenset(("before", "after")))
+        item = store.get(identifier)
+        review = get_review(item, review_id)
+        if review_status(item, review) != "current":
+            raise Issue("The review source changed. The saved group table remains available.", 409)
+        with engine.slots:
+            computed = review_computed(engine, item, review)
+            key = (
+                "step-review-image", review.id, side, review.anchor.get("signature"),
+                data_digest([asdict(link) for link in review.links]),
+                data_digest(asdict(item.display)),
+            )
+            content = engine.materials.get(key, lambda: review_image(engine, item, review, computed, side))
+        return content_response(content, "image/png")
 
     @app.get("/api/inspections/<identifier>/export/<kind>")
     def image_export(identifier, kind):

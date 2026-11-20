@@ -9,6 +9,7 @@ from .model import (
     AnalysisSettings, CAPTURE_ROLES, Calibration, Capture, Inspection, Issue, Placement, Plane,
     SENSOR_ROLES, ViewSettings, boolean, choice, file_id, integer, mapping, real, text, utcnow,
 )
+from .step_review import apply_review_edit, get_review, list_reviews, make_review
 from .store import Store, new_id, summary
 
 
@@ -54,6 +55,7 @@ def capture_metadata(role: str, name: str, source: SensorImage, raw: dict, *, sy
 def inspection_payload(inspection: Inspection) -> dict:
     output = inspection.to_dict()
     output["findings"] = list_findings(inspection)
+    output["reviews"] = list_reviews(inspection)
     output["summary"] = summary(inspection)
     output["placements"] = {}
     for capture in inspection.captures.values():
@@ -180,6 +182,8 @@ class Inspections:
         capture = item.capture(capture_id)
         if capture_applies_to_findings(item, capture.id):
             raise Issue("Review evidence uses this capture. Keep its original for traceability.", 409)
+        if capture_applies_to_reviews(item, capture.id):
+            raise Issue("A step review uses this capture. Remove the review before detaching the original.", 409)
         if capture.id in (item.calibration.dark_id, item.calibration.flat_id):
             raise Issue("Clear the selected calibration reference before removing this capture.", 409)
         del item.captures[capture.id]
@@ -223,6 +227,32 @@ class Inspections:
         item.findings = [entry for entry in item.findings if entry.id != removed.id]
         return self.store.save(item, item.revision, "finding withdrawn", {"finding": removed.id})
 
+    def add_review(self, identifier: str, expected, raw: dict) -> Inspection:
+        item = self.checked(identifier, expected)
+        review = make_review(item, raw)
+        item.reviews.append(review)
+        return self.store.save(item, item.revision, "step review recorded", {
+            "review": review.id,
+            "before": review.before_capture,
+            "after": review.after_capture,
+        })
+
+    def change_review(self, identifier: str, expected, review_id: str, raw: dict,
+                      links=None) -> Inspection:
+        item = self.checked(identifier, expected)
+        review = get_review(item, review_id)
+        updated = apply_review_edit(review, raw, links)
+        item.reviews = [updated if value.id == review.id else value for value in item.reviews]
+        return self.store.save(item, item.revision, "step review updated", {
+            "review": review.id, "links": len(updated.links),
+        })
+
+    def remove_review(self, identifier: str, expected, review_id: str) -> Inspection:
+        item = self.checked(identifier, expected)
+        review = get_review(item, review_id)
+        item.reviews = [value for value in item.reviews if value.id != review.id]
+        return self.store.save(item, item.revision, "step review removed", {"review": review.id})
+
 
 def capture_applies_to_findings(inspection: Inspection, identifier: str) -> bool:
     for finding in inspection.findings:
@@ -232,6 +262,13 @@ def capture_applies_to_findings(inspection: Inspection, identifier: str) -> bool
         if identifier in (reference.get("dark_id"), reference.get("flat_id")):
             return True
     return False
+
+
+def capture_applies_to_reviews(inspection: Inspection, identifier: str) -> bool:
+    return any(
+        identifier in (review.before_capture, review.after_capture)
+        for review in inspection.reviews
+    )
 
 
 def check_calibration(inspection: Inspection) -> dict:

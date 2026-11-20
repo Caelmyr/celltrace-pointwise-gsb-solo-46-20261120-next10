@@ -4,10 +4,11 @@ import {
 import {renderWorkbench} from "./bench.js";
 import {renderCaptures, showPlane} from "./captures.js";
 import {renderFindings, renderLot, renderReport, showHistory} from "./reviews.js";
+import {renderStepReviews} from "./stepreviews.js";
 
 const TABS = [
   ["bench", "Image bench"], ["captures", "Captures"], ["findings", "Findings"],
-  ["report", "Report"], ["lot", "Lot review"],
+  ["reviews", "Step review"], ["report", "Report"], ["lot", "Lot review"],
 ];
 
 class CellTraceApp {
@@ -181,7 +182,7 @@ class CellTraceApp {
     $("#case-plane").onclick = () => showPlane(this);
     $$("[data-tab]").forEach((node) => { node.onclick = () => this.showTab(node.dataset.tab); });
     const view = $("#active-view");
-    const renderTab = {bench: renderWorkbench, captures: renderCaptures, findings: renderFindings, report: renderReport, lot: renderLot};
+    const renderTab = {bench: renderWorkbench, captures: renderCaptures, findings: renderFindings, reviews: renderStepReviews, report: renderReport, lot: renderLot};
     renderTab[this.tab](this, view);
   }
 

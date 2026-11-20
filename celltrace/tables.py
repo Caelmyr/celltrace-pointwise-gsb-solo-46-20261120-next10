@@ -22,6 +22,10 @@ COLUMNS = {
         "id", "cell", "bounds", "center", "length_px", "length_mm", "mean_width_px", "median_contrast",
         "peak_contrast", "axis_degrees", "endpoints", "junctions", "paths",
     ),
+    "busbars": (
+        "id", "cell", "busbar", "position", "segment", "bounds", "nominal_x", "detected_x",
+        "offset_px", "offset_mm", "contrast", "coverage", "status", "obstruction", "candidates",
+    ),
     "response": (
         "cell", "string", "expected_pixels", "common_pixels", "stable_pixels", "support", "ratio", "ratio_p10",
         "ratio_p90", "relative", "weak_fraction", "assessment",

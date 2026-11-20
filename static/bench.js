@@ -8,7 +8,7 @@ import {showFindingForm} from "./reviews.js";
 
 const LAYERS = [
   ["panel", "EL image"], ["support", "Support"], ["quality", "Quality"], ["intensity", "Cell levels"],
-  ["dark", "Dark regions"], ["cracks", "Crack traces"], ["response", "Current response"],
+  ["dark", "Dark regions"], ["cracks", "Crack traces"], ["busbars", "Busbar check"], ["response", "Current response"],
   ["strings", "Strings"], ["calibration", "Calibration"],
 ];
 const TABS = Object.fromEntries(LAYERS);
@@ -19,6 +19,8 @@ const LEGENDS = {
   intensity: [["#464197", "Lower signal"], ["#8ad0a1", "Higher signal"]],
   dark: [["#f5a968", "Dark evidence"]],
   cracks: [["#ff7b98", "Trace"], ["#ffe2a1", "Endpoint"], ["#9ce8d4", "Junction"], ["#638fc0", "Busbar band"]],
+  busbars: [["#8be7c9", "Tracked"], ["#f0c973", "To verify"], ["#e98aa3", "Obscured"],
+    ["#9aa3b2", "Not found"], ["#629ec5", "Nominal"]],
   response: [["#a1387b", "Weaker"], ["#f6ca78", "Reference range"], ["#20579e", "Stronger"]],
   strings: [["#a1387b", "Lower relative signal"], ["#40aeac", "Higher relative signal"]],
   calibration: [["#dc9b49", "Invalid reference"], ["#38649d", "Signal at floor"]],
@@ -33,6 +35,9 @@ const COLS = {
     ["Open boundary", "open_boundary", join]],
   cracks: [["Trace", "id"], ["Cell", "cell"], ["Length px", "length_px"], ["Length mm", "length_mm"], ["Axis °", "axis_degrees"],
     ["Ends", "endpoints", length], ["Junctions", "junctions", length]],
+  busbars: [["Segment", "id"], ["Busbar", "busbar"], ["Status", "status"], ["Offset px", "offset_px"],
+    ["Offset mm", "offset_mm"], ["Contrast", "contrast"], ["Coverage", "coverage", percent],
+    ["Obstruction", "obstruction", join], ["Candidate x", "candidates", candidates]],
   response: [["Cell", "cell"], ["Overlap", "support", percent], ["Ratio", "ratio"], ["Relative", "relative"],
     ["Weak px", "weak_fraction", percent], ["Assessment", "assessment"]],
   strings: [["String", "string"], ["Support", "coverage", percent], ["Median", "median_relative"], ["Range", "p90_p10_span"],
@@ -41,6 +46,7 @@ const COLS = {
 
 function join(x) { return x?.length ? x.join(", ") : "—"; }
 function length(x) { return x?.length ?? 0; }
+function candidates(x) { return x?.length ? x.map(([px]) => format(px, 1)).join(", ") : "—"; }
 
 export function renderWorkbench(app, root) {
   const ctx = app.workspace;
@@ -217,6 +223,12 @@ function metricRows(kind, value) {
     cracks: [
       get("Candidate traces", "count"), get("Cells with traces", "cells_with_traces"),
       get("Length in pixels", "trace_length_px"), get("Length in mm", "trace_length_mm"),
+    ],
+    busbars: [
+      ["Tracked segments", `${value.tracked} / ${value.segments}`],
+      get("To verify", "review"), get("Obscured", "obscured"), get("Not found", "lost"),
+      get("Median |offset| px", "median_abs_offset_px"), get("Max |offset| px", "max_abs_offset_px"),
+      get("Max |offset| mm", "max_abs_offset_mm"),
     ],
     response: [
       get("Usable cells", "usable_cells"), get("Weak cells", "weak_cells"),

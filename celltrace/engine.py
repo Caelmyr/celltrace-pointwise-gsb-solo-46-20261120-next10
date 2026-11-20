@@ -3,6 +3,7 @@ from threading import BoundedSemaphore
 
 import numpy as np
 
+from .busbars import BusbarMap, busbar_check
 from .cache import MemoryCache
 from .calibration import (
     CAL_VERSION, PanelImage, ReferenceImage, calibrate_sensor,
@@ -21,7 +22,9 @@ from .strings import StringMap, inspect_strings
 from .transects import Transect, analyze_transect
 
 
-MEASUREMENT_PLANES = frozenset(("quality", "calibration", "intensity", "dark", "cracks", "response", "strings"))
+MEASUREMENT_PLANES = frozenset(
+    ("quality", "calibration", "intensity", "dark", "cracks", "busbars", "response", "strings")
+)
 EL_LAYERS = frozenset(("panel", "support", "grid")) | MEASUREMENT_PLANES
 MODEL_REVISION = "celltrace-plane-v1"
 
@@ -37,7 +40,7 @@ class PanelContext:
 @dataclass(frozen=True)
 class PlaneAnalysis:
     context: PanelContext
-    data: QualityMap | DarkMap | IntensityMap | CrackMap | CurrentResponse | StringMap | dict
+    data: QualityMap | DarkMap | IntensityMap | CrackMap | BusbarMap | CurrentResponse | StringMap | dict
 
 
 def panel_identity(inspection: Inspection, capture: Capture) -> tuple:
@@ -153,6 +156,8 @@ class Engine:
                 context.panel, inspection.plane, context.cells,
                 inspection.analysis, self.dark(inspection, context).mask,
             )
+        if kind == "busbars":
+            return busbar_check(context.panel, inspection.plane, context.cells, inspection.analysis)
         if kind == "strings":
             return inspect_strings(context.cells, inspection.plane, self.intensity(inspection, context))
         raise Issue("This measurement is unavailable.", 404)

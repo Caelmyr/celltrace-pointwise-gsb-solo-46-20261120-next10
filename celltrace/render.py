@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from scipy import ndimage
 
+from .busbars import paint_busbar_check
 from .calibration import PanelImage
 from .engine import EL_LAYERS, MEASUREMENT_PLANES, Engine
 from .findings import finding_status
@@ -131,6 +132,8 @@ def render_base(inspection: Inspection, engine: Engine, role: str, kind: str):
         image = mixed_overlay(image, data.evidence, (239, 103, 133), 0.52)
         image = mixed_overlay(image, ndimage.binary_dilation(data.skeleton) & ~data.busbars, (255, 122, 151), 0.92)
         draw_endpoints(image, data.records)
+    elif kind == "busbars":
+        image = paint_busbar_check(panel_preview(panel, display), data.records)
     elif kind == "response":
         image = scalar_rgb(data.relative, data.eligible, (0.34, 1.32), DIVERGING)
         image = color_edges(image, data.weak, (247, 204, 106), 0.63)

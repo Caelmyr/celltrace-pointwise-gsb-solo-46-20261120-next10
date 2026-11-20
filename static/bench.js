@@ -42,6 +42,10 @@ const COLS = {
 function join(x) { return x?.length ? x.join(", ") : "—"; }
 function length(x) { return x?.length ?? 0; }
 
+const STRINGS_HALF_COLS = [["String", "string"], ["Section", "section"], ["Half", "half"],
+  ["Support", "coverage", percent], ["Median", "median_relative"], ["Paired", "paired_relative"],
+  ["Flags", "flags", join], ["Section note", "section_note"], ["Cells", "cells", join]];
+
 export function renderWorkbench(app, root) {
   const ctx = app.workspace;
   const item = app.case;
@@ -222,8 +226,20 @@ function metricRows(kind, value) {
       get("Usable cells", "usable_cells"), get("Weak cells", "weak_cells"),
       get("Ratio reference", "reference_ratio"), get("Overlap pixels", "shared_pixels"),
     ],
-    strings: [get("Strings", "groups"), get("Flagged strings", "groups_with_flags")],
+    strings: stringMetrics(value),
   }[kind] || [];
+}
+
+function stringMetrics(summary) {
+  const branch = summary.axis === "half_columns";
+  const rows = [
+    [branch ? "Branches" : "Strings", format(summary.groups)],
+    [branch ? "Flagged branches" : "Flagged strings", format(summary.groups_with_flags)],
+  ];
+  if (branch) {
+    rows.push(["Bypass sections", format(summary.sections)], ["Sections to review", format(summary.sections_to_review)]);
+  }
+  return rows;
 }
 
 async function loadLayer(app, root, kind, role, version) {
@@ -245,7 +261,8 @@ async function loadLayer(app, root, kind, role, version) {
         ["Flat normalization", format(model.summary.flat_normalization)],
         ["Calibrated signal", format(model.summary.signal.median)],
       ])}</div>`
-      : table(COLS[kind], model.rows, (row) => row.cell
+      : table(kind === "strings" && model.rows.some((row) => row.section != null) ? STRINGS_HALF_COLS : COLS[kind],
+        model.rows, (row) => row.cell
         ? `<button type="button" class="compact" data-cell="${e(row.cell)}" aria-label="Inspect ${e(row.cell)}">Inspect</button>`
         : "");
     $$("[data-cell]", result).forEach((node) => {

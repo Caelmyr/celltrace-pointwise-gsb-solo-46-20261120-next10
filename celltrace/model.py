@@ -26,7 +26,7 @@ FLOW_STATES = frozenset(("open", "issued"))
 FINDING_STATES = frozenset(("open", "hold", "cleared", "confirmed"))
 FINDING_CATEGORIES = frozenset(("dark", "crack", "suspect", "capture", "general"))
 ORIENTATIONS = frozenset(("identity", "rotate180", "mirror-x", "mirror-y"))
-STRING_AXES = frozenset(("columns", "rows"))
+STRING_AXES = frozenset(("columns", "rows", "half_columns"))
 MAX_SOURCE_PIXELS = 8_000_000
 MAX_PLANE_PIXELS = 1_500_000
 MAX_UPLOAD_BYTES = 22 * 1024 * 1024
@@ -217,8 +217,10 @@ class Plane:
             raise Issue("Each cell needs at least 16 plane pixels per side.")
         string_axis = choice(raw.get("string_axis", "columns"), "String axis", STRING_AXES)
         string_size = integer(
-            raw.get("string_size", 1), "String width", 1, cols if string_axis == "columns" else rows
+            raw.get("string_size", 1), "String width", 1, rows if string_axis == "rows" else cols
         )
+        if string_axis == "half_columns" and rows % 2:
+            raise Issue("Half-cut branches pair two equal row halves; choose an even cell row count.")
         dims = [raw.get(key) for key in ("physical_width", "physical_height")]
         if all(value is None or value == "" for value in dims):
             physical = (None, None)

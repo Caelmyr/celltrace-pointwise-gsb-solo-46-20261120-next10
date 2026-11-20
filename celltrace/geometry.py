@@ -161,16 +161,21 @@ def cells_for(plane: Plane) -> list[Cell]:
     cells = []
     x_edges = np.rint(np.linspace(0, plane.width, plane.cols + 1)).astype(int)
     y_edges = np.rint(np.linspace(0, plane.height, plane.rows + 1)).astype(int)
+    half_rows = plane.rows // 2 if plane.string_axis == "half_columns" else 0
     for row, (y0, y1) in enumerate(zip(y_edges, y_edges[1:])):
         for col, (x0, x1) in enumerate(zip(x_edges, x_edges[1:])):
             ix = int((x1 - x0) * plane.inset)
             iy = int((y1 - y0) * plane.inset)
-            axis_index = col if plane.string_axis == "columns" else row
+            if plane.string_axis == "half_columns":
+                string = (col // plane.string_size) * 2 + min(row // half_rows, 1) + 1
+            else:
+                axis_index = col if plane.string_axis == "columns" else row
+                string = axis_index // plane.string_size + 1
             cells.append(Cell(
                 row, col,
                 (int(x0), int(y0), int(x1), int(y1)),
                 (int(x0) + ix, int(y0) + iy, int(x1) - ix, int(y1) - iy),
-                axis_index // plane.string_size + 1,
+                string,
             ))
     return cells
 

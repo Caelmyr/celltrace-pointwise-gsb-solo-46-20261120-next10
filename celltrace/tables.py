@@ -27,7 +27,8 @@ COLUMNS = {
         "ratio_p90", "relative", "weak_fraction", "assessment",
     ),
     "strings": (
-        "string", "cells", "coverage", "median_relative", "p90_p10_span", "largest_step", "low_runs", "flags", "readings",
+        "string", "cells", "coverage", "median_relative", "p90_p10_span", "largest_step", "low_runs", "flags",
+        "section", "half", "paired_relative", "section_note", "readings",
     ),
     "transect": ("index", "x", "y", "distance", "distance_mm", "cell", "usable", "support", "signal", "spread"),
     "lot": ("module", "lot", "state", "measurement", "median", "usable_cells", "total_cells", "crack_count", "dark_count"),

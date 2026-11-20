@@ -93,10 +93,11 @@ export function showPlane(app) {
       ${num("Physical width (mm)", "physical_width", model.physical_width, 20, 12000, .01, false)}
       ${num("Physical height (mm)", "physical_height", model.physical_height, 20, 12000, .01, false)}
       ${num("Cell measurement inset", "inset", model.inset, 0, .3, .01)}
-      ${field("String direction", "string_axis", model.string_axis, {values: [["columns", "Column groups"], ["rows", "Row groups"]]})}
+      ${field("String direction", "string_axis", model.string_axis, {values: [["columns", "Column groups"], ["rows", "Row groups"], ["half_columns", "Half-cut branches (columns)"]]})}
       ${num("Rows or columns per string", "string_size", model.string_size, 1, 24)}
     </div></fieldset>
-    <p class="small-copy">Corners are saved per EL capture. Enter both physical dimensions to include metric distances and areas.</p>
+    <p class="small-copy">Corners are saved per EL capture. Enter both physical dimensions to include metric distances and areas.
+      Half-cut branches split the cell rows into two parallel halves per bypass section and need an even row count; string width then counts columns per section.</p>
     <p class="form-error" hidden></p><div class="form-actions">
       ${disabled ? "" : submit("Apply plane")}</div></form>`);
   wireForm(root, async (values) => {
